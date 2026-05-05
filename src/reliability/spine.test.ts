@@ -1,10 +1,16 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  appendNotifyOutboxEvent,
+  appendTaskLedgerEvent,
   buildTaskEvent,
   buildTaskId,
   buildTaskIdempotencyKey,
   buildTerminalNotification,
   canonicalJson,
+  loadReliabilitySpineSnapshot,
   notificationsMissingForTerminalTasks,
   reduceTaskEvents,
 } from "./spine.js";
@@ -126,5 +132,75 @@ describe("reliability spine core", () => {
       message: "task_20260428_discord_b failed",
     });
     expect(missing[0]?.idempotencyKey).toContain(taskB.taskId);
+  });
+
+  it("recovers task and notification state from append-only JSONL files after restart", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "openclaw-reliability-spine-"));
+    try {
+      const paths = {
+        taskEventsPath: join(dir, "tasks.jsonl"),
+        notifyOutboxPath: join(dir, "notify.jsonl"),
+      };
+      const target = { channel: "discord", to: "channel:1478495643763740744" };
+      const taskId = "task_20260505_discord_restart";
+      const idempotencyKey = buildTaskIdempotencyKey({
+        source,
+        kind: "agent_turn",
+        goal: "restart",
+      });
+      const started = buildTaskEvent({
+        taskId,
+        type: "started",
+        source,
+        idempotencyKey,
+        ts: "2026-05-05T20:00:00.000Z",
+      });
+      const completed = buildTaskEvent({
+        taskId,
+        type: "completed",
+        source,
+        idempotencyKey,
+        ts: "2026-05-05T20:01:00.000Z",
+      });
+      const notification = buildTerminalNotification({
+        taskEvent: completed,
+        target,
+        message: "completed after restart",
+      });
+
+      expect(await appendTaskLedgerEvent(paths.taskEventsPath, started)).toMatchObject({
+        appended: true,
+      });
+      expect(await appendTaskLedgerEvent(paths.taskEventsPath, completed)).toMatchObject({
+        appended: true,
+      });
+      expect(await appendTaskLedgerEvent(paths.taskEventsPath, completed)).toMatchObject({
+        appended: false,
+      });
+      expect(await appendNotifyOutboxEvent(paths.notifyOutboxPath, notification)).toMatchObject({
+        appended: true,
+      });
+      expect(await appendNotifyOutboxEvent(paths.notifyOutboxPath, notification)).toMatchObject({
+        appended: false,
+      });
+
+      const recovered = await loadReliabilitySpineSnapshot(paths);
+      expect(recovered.taskEvents).toHaveLength(2);
+      expect(recovered.notifications).toHaveLength(1);
+      expect(recovered.taskSnapshots.get(taskId)).toMatchObject({
+        state: "completed",
+        terminal: true,
+      });
+      expect(
+        notificationsMissingForTerminalTasks({
+          taskEvents: recovered.taskEvents,
+          notifications: recovered.notifications,
+          target,
+          formatMessage: (event) => `${event.taskId} ${event.state}`,
+        }),
+      ).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
