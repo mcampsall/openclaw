@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { mkdir, readFile, appendFile } from "node:fs/promises";
+import { dirname } from "node:path";
 
 export type ReliabilitySource = {
   channel: string;
@@ -57,6 +59,17 @@ export type ReliabilityTaskSnapshot = {
   state: TaskState;
   terminal: boolean;
   lastEvent: TaskLedgerEvent;
+};
+
+export type ReliabilitySpineStorePaths = {
+  taskEventsPath: string;
+  notifyOutboxPath: string;
+};
+
+export type ReliabilitySpineSnapshot = {
+  taskEvents: TaskLedgerEvent[];
+  notifications: NotifyOutboxEvent[];
+  taskSnapshots: Map<string, ReliabilityTaskSnapshot>;
 };
 
 const TERMINAL_TASK_STATES = new Set<TaskState>(["completed", "failed", "cancelled"]);
@@ -211,4 +224,101 @@ export function notificationsMissingForTerminalTasks(params: {
         message: params.formatMessage(snapshot.lastEvent),
       }),
     );
+}
+
+async function ensureParentDir(filePath: string): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+}
+
+async function readJsonlFile<T>(filePath: string): Promise<T[]> {
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+
+  return raw
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      try {
+        return JSON.parse(line) as T;
+      } catch (error) {
+        throw new Error(
+          `Invalid JSONL record in ${filePath}:${index + 1}: ${(error as Error).message}`,
+          {
+            cause: error,
+          },
+        );
+      }
+    });
+}
+
+async function appendJsonlRecord(filePath: string, record: unknown): Promise<void> {
+  await ensureParentDir(filePath);
+  await appendFile(filePath, `${JSON.stringify(record)}\n`, "utf8");
+}
+
+export async function readTaskLedgerEvents(filePath: string): Promise<TaskLedgerEvent[]> {
+  return readJsonlFile<TaskLedgerEvent>(filePath);
+}
+
+export async function readNotifyOutboxEvents(filePath: string): Promise<NotifyOutboxEvent[]> {
+  return readJsonlFile<NotifyOutboxEvent>(filePath);
+}
+
+export async function appendTaskLedgerEvent(
+  filePath: string,
+  event: TaskLedgerEvent,
+): Promise<{ appended: boolean; event: TaskLedgerEvent }> {
+  const existing = await readTaskLedgerEvents(filePath);
+  const alreadyPersisted = existing.some(
+    (candidate) =>
+      candidate.taskId === event.taskId &&
+      candidate.type === event.type &&
+      candidate.idempotencyKey === event.idempotencyKey,
+  );
+  if (alreadyPersisted) {
+    return { appended: false, event };
+  }
+
+  await appendJsonlRecord(filePath, event);
+  return { appended: true, event };
+}
+
+export async function appendNotifyOutboxEvent(
+  filePath: string,
+  notification: NotifyOutboxEvent,
+): Promise<{ appended: boolean; notification: NotifyOutboxEvent }> {
+  const existing = await readNotifyOutboxEvents(filePath);
+  const alreadyPersisted = existing.some(
+    (candidate) =>
+      candidate.notificationId === notification.notificationId ||
+      candidate.idempotencyKey === notification.idempotencyKey,
+  );
+  if (alreadyPersisted) {
+    return { appended: false, notification };
+  }
+
+  await appendJsonlRecord(filePath, notification);
+  return { appended: true, notification };
+}
+
+export async function loadReliabilitySpineSnapshot(
+  paths: ReliabilitySpineStorePaths,
+): Promise<ReliabilitySpineSnapshot> {
+  const [taskEvents, notifications] = await Promise.all([
+    readTaskLedgerEvents(paths.taskEventsPath),
+    readNotifyOutboxEvents(paths.notifyOutboxPath),
+  ]);
+  return {
+    taskEvents,
+    notifications,
+    taskSnapshots: reduceTaskEvents(taskEvents),
+  };
 }
