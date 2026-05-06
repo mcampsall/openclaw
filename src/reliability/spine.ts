@@ -168,7 +168,12 @@ export function buildTaskEvent(params: {
 
 export function reduceTaskEvents(events: TaskLedgerEvent[]): Map<string, ReliabilityTaskSnapshot> {
   const snapshots = new Map<string, ReliabilityTaskSnapshot>();
-  for (const event of events) {
+  const ordered = events.toSorted((left, right) => left.ts.localeCompare(right.ts));
+  for (const event of ordered) {
+    const existing = snapshots.get(event.taskId);
+    if (existing?.terminal) {
+      continue;
+    }
     snapshots.set(event.taskId, {
       taskId: event.taskId,
       state: event.state,
@@ -208,13 +213,28 @@ export function buildTerminalNotification(params: {
   };
 }
 
+function sameNotifyTarget(
+  left: NotifyOutboxEvent["target"],
+  right: NotifyOutboxEvent["target"],
+): boolean {
+  return (
+    left.channel === right.channel &&
+    left.to === right.to &&
+    (left.accountId ?? null) === (right.accountId ?? null)
+  );
+}
+
 export function notificationsMissingForTerminalTasks(params: {
   taskEvents: TaskLedgerEvent[];
   notifications: NotifyOutboxEvent[];
   target: NotifyOutboxEvent["target"];
   formatMessage: (event: TaskLedgerEvent) => string;
 }): NotifyOutboxEvent[] {
-  const existingTaskIds = new Set(params.notifications.map((notification) => notification.taskId));
+  const existingTaskIds = new Set(
+    params.notifications
+      .filter((notification) => sameNotifyTarget(notification.target, params.target))
+      .map((notification) => notification.taskId),
+  );
   return Array.from(reduceTaskEvents(params.taskEvents).values())
     .filter((snapshot) => snapshot.terminal && !existingTaskIds.has(snapshot.taskId))
     .map((snapshot) =>
@@ -241,27 +261,42 @@ async function readJsonlFile<T>(filePath: string): Promise<T[]> {
     throw error;
   }
 
-  return raw
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line, index) => {
-      try {
-        return JSON.parse(line) as T;
-      } catch (error) {
-        throw new Error(
-          `Invalid JSONL record in ${filePath}:${index + 1}: ${(error as Error).message}`,
-          {
-            cause: error,
-          },
-        );
-      }
-    });
+  const records: T[] = [];
+  const lines = raw.split(/\r?\n/u);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line) {
+      continue;
+    }
+    try {
+      records.push(JSON.parse(line) as T);
+    } catch (error) {
+      console.warn(
+        `[reliability-spine] skipping invalid JSONL record in ${filePath}:${index + 1}: ${(error as Error).message}`,
+      );
+    }
+  }
+  return records;
 }
 
 async function appendJsonlRecord(filePath: string, record: unknown): Promise<void> {
   await ensureParentDir(filePath);
   await appendFile(filePath, `${JSON.stringify(record)}\n`, "utf8");
+}
+
+const fileLocks = new Map<string, Promise<unknown>>();
+
+export function withSpineFileLock<T>(filePath: string, task: () => Promise<T>): Promise<T> {
+  const previous = fileLocks.get(filePath) ?? Promise.resolve();
+  const next = previous.then(
+    () => task(),
+    () => task(),
+  );
+  fileLocks.set(
+    filePath,
+    next.catch(() => undefined),
+  );
+  return next;
 }
 
 export async function readTaskLedgerEvents(filePath: string): Promise<TaskLedgerEvent[]> {
@@ -272,41 +307,45 @@ export async function readNotifyOutboxEvents(filePath: string): Promise<NotifyOu
   return readJsonlFile<NotifyOutboxEvent>(filePath);
 }
 
-export async function appendTaskLedgerEvent(
+export function appendTaskLedgerEvent(
   filePath: string,
   event: TaskLedgerEvent,
 ): Promise<{ appended: boolean; event: TaskLedgerEvent }> {
-  const existing = await readTaskLedgerEvents(filePath);
-  const alreadyPersisted = existing.some(
-    (candidate) =>
-      candidate.taskId === event.taskId &&
-      candidate.type === event.type &&
-      candidate.idempotencyKey === event.idempotencyKey,
-  );
-  if (alreadyPersisted) {
-    return { appended: false, event };
-  }
+  return withSpineFileLock(filePath, async () => {
+    const existing = await readTaskLedgerEvents(filePath);
+    const alreadyPersisted = existing.some(
+      (candidate) =>
+        candidate.taskId === event.taskId &&
+        candidate.type === event.type &&
+        candidate.idempotencyKey === event.idempotencyKey,
+    );
+    if (alreadyPersisted) {
+      return { appended: false, event };
+    }
 
-  await appendJsonlRecord(filePath, event);
-  return { appended: true, event };
+    await appendJsonlRecord(filePath, event);
+    return { appended: true, event };
+  });
 }
 
-export async function appendNotifyOutboxEvent(
+export function appendNotifyOutboxEvent(
   filePath: string,
   notification: NotifyOutboxEvent,
 ): Promise<{ appended: boolean; notification: NotifyOutboxEvent }> {
-  const existing = await readNotifyOutboxEvents(filePath);
-  const alreadyPersisted = existing.some(
-    (candidate) =>
-      candidate.notificationId === notification.notificationId ||
-      candidate.idempotencyKey === notification.idempotencyKey,
-  );
-  if (alreadyPersisted) {
-    return { appended: false, notification };
-  }
+  return withSpineFileLock(filePath, async () => {
+    const existing = await readNotifyOutboxEvents(filePath);
+    const alreadyPersisted = existing.some(
+      (candidate) =>
+        candidate.notificationId === notification.notificationId ||
+        candidate.idempotencyKey === notification.idempotencyKey,
+    );
+    if (alreadyPersisted) {
+      return { appended: false, notification };
+    }
 
-  await appendJsonlRecord(filePath, notification);
-  return { appended: true, notification };
+    await appendJsonlRecord(filePath, notification);
+    return { appended: true, notification };
+  });
 }
 
 export async function loadReliabilitySpineSnapshot(
