@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, appendFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readFile, appendFile, realpath } from "node:fs/promises";
+import { basename, dirname, resolve as resolvePath, join as joinPath } from "node:path";
 
 export type ReliabilitySource = {
   channel: string;
@@ -284,19 +284,37 @@ async function appendJsonlRecord(filePath: string, record: unknown): Promise<voi
   await appendFile(filePath, `${JSON.stringify(record)}\n`, "utf8");
 }
 
-const fileLocks = new Map<string, Promise<unknown>>();
+const fileLocks = new Map<string, Promise<void>>();
 
-export function withSpineFileLock<T>(filePath: string, task: () => Promise<T>): Promise<T> {
-  const previous = fileLocks.get(filePath) ?? Promise.resolve();
-  const next = previous.then(
-    () => task(),
-    () => task(),
-  );
-  fileLocks.set(
-    filePath,
-    next.catch(() => undefined),
-  );
-  return next;
+async function resolveFileLockKey(filePath: string): Promise<string> {
+  const resolvedPath = resolvePath(filePath);
+  const parentDir = dirname(resolvedPath);
+  await mkdir(parentDir, { recursive: true });
+  try {
+    return joinPath(await realpath(parentDir), basename(resolvedPath));
+  } catch {
+    return resolvedPath;
+  }
+}
+
+export async function withSpineFileLock<T>(filePath: string, task: () => Promise<T>): Promise<T> {
+  const lockKey = await resolveFileLockKey(filePath);
+  const previous = fileLocks.get(lockKey) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((release) => {
+    releaseCurrent = release;
+  });
+  const tail = previous.catch(() => undefined).then(() => current);
+  fileLocks.set(lockKey, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await task();
+  } finally {
+    releaseCurrent();
+    if (fileLocks.get(lockKey) === tail) {
+      fileLocks.delete(lockKey);
+    }
+  }
 }
 
 export async function readTaskLedgerEvents(filePath: string): Promise<TaskLedgerEvent[]> {
