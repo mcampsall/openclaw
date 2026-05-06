@@ -147,6 +147,9 @@ export async function repairManagedNpmRootOpenClawPeer(params: {
     });
   if (openclawPackageDirExists) {
     await fs.rm(openclawPackageDir, { recursive: true, force: true });
+    await fs.rm(path.join(params.npmRoot, "node_modules", ".package-lock.json"), {
+      force: true,
+    });
     changed = true;
   }
 

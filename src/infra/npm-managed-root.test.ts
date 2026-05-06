@@ -219,6 +219,21 @@ describe("managed npm root", () => {
       path.join(npmRoot, "node_modules", "openclaw", "package.json"),
       `${JSON.stringify({ name: "openclaw", version: "2026.5.4" })}\n`,
     );
+    await fs.writeFile(
+      path.join(npmRoot, "node_modules", ".package-lock.json"),
+      `${JSON.stringify(
+        {
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/openclaw": {
+              version: "2026.5.4",
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
 
     await expect(repairManagedNpmRootOpenClawPeer({ npmRoot })).resolves.toBe(true);
 
@@ -241,6 +256,11 @@ describe("managed npm root", () => {
     expect(lockfile.packages?.["node_modules/@openclaw/discord"]?.version).toBe("2026.5.4");
     expect(lockfile.dependencies?.openclaw).toBeUndefined();
     await expect(fs.lstat(path.join(npmRoot, "node_modules", "openclaw"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      fs.lstat(path.join(npmRoot, "node_modules", ".package-lock.json")),
+    ).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
