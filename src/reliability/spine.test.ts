@@ -1,7 +1,7 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   appendNotifyOutboxEvent,
   appendTaskLedgerEvent,
@@ -12,6 +12,7 @@ import {
   canonicalJson,
   loadReliabilitySpineSnapshot,
   notificationsMissingForTerminalTasks,
+  readTaskLedgerEvents,
   reduceTaskEvents,
 } from "./spine.js";
 
@@ -132,6 +133,166 @@ describe("reliability spine core", () => {
       message: "task_20260428_discord_b failed",
     });
     expect(missing[0]?.idempotencyKey).toContain(taskB.taskId);
+  });
+
+  it("keeps terminal state sticky when a heartbeat arrives after completion", () => {
+    const taskId = "task_20260505_discord_sticky";
+    const idempotencyKey = "idem-sticky";
+    const completed = buildTaskEvent({
+      taskId,
+      type: "completed",
+      source,
+      idempotencyKey,
+      ts: "2026-05-05T20:00:00.000Z",
+    });
+    const lateHeartbeat = buildTaskEvent({
+      taskId,
+      type: "heartbeat",
+      source,
+      idempotencyKey,
+      ts: "2026-05-05T20:00:30.000Z",
+    });
+
+    const snapshot = reduceTaskEvents([completed, lateHeartbeat]).get(taskId);
+    expect(snapshot).toMatchObject({ state: "completed", terminal: true });
+    expect(snapshot?.lastEvent).toBe(completed);
+  });
+
+  it("reduces correctly when events arrive out of timestamp order", () => {
+    const taskId = "task_20260505_discord_ooo";
+    const idempotencyKey = "idem-ooo";
+    const started = buildTaskEvent({
+      taskId,
+      type: "started",
+      source,
+      idempotencyKey,
+      ts: "2026-05-05T20:00:00.000Z",
+    });
+    const completed = buildTaskEvent({
+      taskId,
+      type: "completed",
+      source,
+      idempotencyKey,
+      ts: "2026-05-05T20:01:00.000Z",
+    });
+
+    const snapshot = reduceTaskEvents([completed, started]).get(taskId);
+    expect(snapshot).toMatchObject({ state: "completed", terminal: true });
+    expect(snapshot?.lastEvent).toBe(completed);
+  });
+
+  it("treats cancelled as a sticky terminal state", () => {
+    const taskId = "task_20260505_discord_cancelled";
+    const idempotencyKey = "idem-cancelled";
+    const started = buildTaskEvent({
+      taskId,
+      type: "started",
+      source,
+      idempotencyKey,
+      ts: "2026-05-05T20:00:00.000Z",
+    });
+    const cancelled = buildTaskEvent({
+      taskId,
+      type: "cancelled",
+      source,
+      idempotencyKey,
+      ts: "2026-05-05T20:01:00.000Z",
+    });
+    const lateHeartbeat = buildTaskEvent({
+      taskId,
+      type: "heartbeat",
+      source,
+      idempotencyKey,
+      ts: "2026-05-05T20:02:00.000Z",
+    });
+
+    const snapshot = reduceTaskEvents([started, cancelled, lateHeartbeat]).get(taskId);
+    expect(snapshot).toMatchObject({ state: "cancelled", terminal: true });
+    expect(snapshot?.lastEvent).toBe(cancelled);
+  });
+
+  it("filters notifications by target when reconciling missing terminal notifications", () => {
+    const targetA = { channel: "discord", to: "channel:111" };
+    const targetB = { channel: "discord", to: "channel:222" };
+    const completed = buildTaskEvent({
+      taskId: "task_20260505_discord_target",
+      type: "completed",
+      source,
+      idempotencyKey: "idem-target",
+      ts: "2026-05-05T20:00:00.000Z",
+    });
+    const notificationForA = buildTerminalNotification({
+      taskEvent: completed,
+      target: targetA,
+      message: "queued for A",
+    });
+
+    const missingForB = notificationsMissingForTerminalTasks({
+      taskEvents: [completed],
+      notifications: [notificationForA],
+      target: targetB,
+      formatMessage: (event) => `${event.taskId} ${event.state}`,
+    });
+
+    expect(missingForB).toHaveLength(1);
+    expect(missingForB[0]).toMatchObject({ target: targetB, taskId: completed.taskId });
+  });
+
+  it("skips and warns on corrupt JSONL lines instead of throwing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "openclaw-reliability-spine-corrupt-"));
+    try {
+      const filePath = join(dir, "tasks.jsonl");
+      const goodEvent = buildTaskEvent({
+        taskId: "task_20260505_discord_good",
+        type: "completed",
+        source,
+        idempotencyKey: "idem-good",
+        ts: "2026-05-05T20:00:00.000Z",
+      });
+      const lines = [JSON.stringify(goodEvent), "{not json", JSON.stringify(goodEvent)].join("\n");
+      await writeFile(filePath, `${lines}\n`, "utf8");
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const events = await readTaskLedgerEvents(filePath);
+        expect(events).toHaveLength(2);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/skipping invalid JSONL record/u);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/:2:/u);
+      } finally {
+        warn.mockRestore();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("serializes concurrent appends so the dedup check is atomic", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "openclaw-reliability-spine-mutex-"));
+    try {
+      const filePath = join(dir, "tasks.jsonl");
+      const event = buildTaskEvent({
+        taskId: "task_20260505_discord_mutex",
+        type: "completed",
+        source,
+        idempotencyKey: "idem-mutex",
+        ts: "2026-05-05T20:00:00.000Z",
+      });
+
+      const results = await Promise.all([
+        appendTaskLedgerEvent(filePath, event),
+        appendTaskLedgerEvent(filePath, event),
+        appendTaskLedgerEvent(filePath, event),
+      ]);
+
+      const appended = results.filter((result) => result.appended);
+      expect(appended).toHaveLength(1);
+
+      const persisted = await readTaskLedgerEvents(filePath);
+      expect(persisted).toHaveLength(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("recovers task and notification state from append-only JSONL files after restart", async () => {
