@@ -17,6 +17,7 @@ export type CliOutput = {
   sessionId?: string;
   usage?: CliUsage;
   finalPromptText?: string;
+  hadThinkingButNoText?: boolean;
 };
 
 export type CliStreamingDelta = {
@@ -346,6 +347,99 @@ function parseClaudeCliJsonlResult(params: {
   return null;
 }
 
+type ContentBlockKind = "text" | "thinking" | "other";
+
+function classifyClaudeAssistantContentBlock(block: unknown): ContentBlockKind | null {
+  if (!isRecord(block)) {
+    return null;
+  }
+  const type = normalizeLowercaseStringOrEmpty(block.type);
+  if (!type) {
+    return null;
+  }
+  if (type === "text") {
+    return "text";
+  }
+  if (type === "thinking" || type === "redacted_thinking") {
+    return "thinking";
+  }
+  return "other";
+}
+
+function classifyClaudeStreamEventBlockKind(
+  parsed: Record<string, unknown>,
+): ContentBlockKind | null {
+  if (parsed.type !== "stream_event" || !isRecord(parsed.event)) {
+    return null;
+  }
+  const event = parsed.event;
+  if (event.type !== "content_block_start" || !isRecord(event.content_block)) {
+    return null;
+  }
+  return classifyClaudeAssistantContentBlock(event.content_block);
+}
+
+function classifyClaudeAssistantMessageBlocks(parsed: Record<string, unknown>): {
+  hasText: boolean;
+  hasThinking: boolean;
+} {
+  let hasText = false;
+  let hasThinking = false;
+  if (parsed.type !== "assistant" || !isRecord(parsed.message)) {
+    return { hasText, hasThinking };
+  }
+  const content = parsed.message.content;
+  if (!Array.isArray(content)) {
+    return { hasText, hasThinking };
+  }
+  for (const block of content) {
+    const kind = classifyClaudeAssistantContentBlock(block);
+    if (kind === "text") {
+      hasText = true;
+    } else if (kind === "thinking") {
+      hasThinking = true;
+    }
+  }
+  return { hasText, hasThinking };
+}
+
+type ClaudeAssistantBlockTracker = {
+  observe(parsed: Record<string, unknown>): void;
+  result(): { hadThinkingButNoText: boolean };
+};
+
+function createClaudeAssistantBlockTracker(params: {
+  backend: CliBackendConfig;
+  providerId: string;
+}): ClaudeAssistantBlockTracker {
+  let sawText = false;
+  let sawThinking = false;
+  const isClaudeDialect = usesClaudeStreamJsonDialect(params);
+  return {
+    observe(parsed) {
+      if (!isClaudeDialect) {
+        return;
+      }
+      const streamKind = classifyClaudeStreamEventBlockKind(parsed);
+      if (streamKind === "text") {
+        sawText = true;
+      } else if (streamKind === "thinking") {
+        sawThinking = true;
+      }
+      const messageKinds = classifyClaudeAssistantMessageBlocks(parsed);
+      if (messageKinds.hasText) {
+        sawText = true;
+      }
+      if (messageKinds.hasThinking) {
+        sawThinking = true;
+      }
+    },
+    result() {
+      return { hadThinkingButNoText: sawThinking && !sawText };
+    },
+  };
+}
+
 function parseClaudeCliStreamingDelta(params: {
   backend: CliBackendConfig;
   providerId: string;
@@ -390,6 +484,10 @@ export function createCliJsonlStreamingParser(params: {
   let usage: CliUsage | undefined;
   let output: CliOutput | null = null;
   const texts: string[] = [];
+  const blockTracker = createClaudeAssistantBlockTracker({
+    backend: params.backend,
+    providerId: params.providerId,
+  });
 
   const handleParsedRecord = (parsed: Record<string, unknown>) => {
     sessionId = pickCliSessionId(parsed, params.backend) ?? sessionId;
@@ -397,6 +495,7 @@ export function createCliJsonlStreamingParser(params: {
       sessionId = parsed.thread_id.trim();
     }
     usage = readCliUsage(parsed) ?? usage;
+    blockTracker.observe(parsed);
 
     const result = parseClaudeCliJsonlResult({
       backend: params.backend,
@@ -473,11 +572,18 @@ export function createCliJsonlStreamingParser(params: {
       flushLines(true);
     },
     getOutput() {
+      const { hadThinkingButNoText } = blockTracker.result();
       if (output) {
-        return output;
+        return hadThinkingButNoText ? { ...output, hadThinkingButNoText } : output;
       }
       const text = texts.join("\n").trim();
-      return text ? { text, sessionId, usage } : null;
+      if (text) {
+        return { text, sessionId, usage };
+      }
+      if (hadThinkingButNoText) {
+        return { text: "", sessionId, usage, hadThinkingButNoText };
+      }
+      return null;
     },
   };
 }
@@ -497,6 +603,8 @@ export function parseCliJsonl(
   let sessionId: string | undefined;
   let usage: CliUsage | undefined;
   const texts: string[] = [];
+  const blockTracker = createClaudeAssistantBlockTracker({ backend, providerId });
+  let claudeResult: CliOutput | null = null;
   for (const line of lines) {
     for (const parsed of parseJsonRecordCandidates(line)) {
       if (!sessionId) {
@@ -506,16 +614,19 @@ export function parseCliJsonl(
         sessionId = parsed.thread_id.trim();
       }
       usage = readCliUsage(parsed) ?? usage;
+      blockTracker.observe(parsed);
 
-      const claudeResult = parseClaudeCliJsonlResult({
-        backend,
-        providerId,
-        parsed,
-        sessionId,
-        usage,
-      });
-      if (claudeResult) {
-        return claudeResult;
+      if (!claudeResult) {
+        const result = parseClaudeCliJsonlResult({
+          backend,
+          providerId,
+          parsed,
+          sessionId,
+          usage,
+        });
+        if (result) {
+          claudeResult = result;
+        }
       }
 
       const item = isRecord(parsed.item) ? parsed.item : null;
@@ -527,11 +638,18 @@ export function parseCliJsonl(
       }
     }
   }
-  const text = texts.join("\n").trim();
-  if (!text) {
-    return null;
+  const { hadThinkingButNoText } = blockTracker.result();
+  if (claudeResult) {
+    return hadThinkingButNoText ? { ...claudeResult, hadThinkingButNoText } : claudeResult;
   }
-  return { text, sessionId, usage };
+  const text = texts.join("\n").trim();
+  if (text) {
+    return { text, sessionId, usage };
+  }
+  if (hadThinkingButNoText) {
+    return { text: "", sessionId, usage, hadThinkingButNoText };
+  }
+  return null;
 }
 
 export function parseCliOutput(params: {

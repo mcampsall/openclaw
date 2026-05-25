@@ -4,6 +4,19 @@ export const GENERIC_EXTERNAL_RUN_FAILURE_TEXT =
 export const HEARTBEAT_EXTERNAL_RUN_FAILURE_TEXT =
   "⚠️ Heartbeat check failed before it could produce an update. The main chat session remains available.";
 
+export const THINKING_ONLY_NO_TEXT_FAILURE_TEXT =
+  "⚠️ I reasoned through that but didn't produce a visible response. Try rephrasing, or use /new to start a fresh session.";
+
+const THINKING_ONLY_FAILURE_MESSAGE_MARKER =
+  "CLI backend returned thinking blocks but no visible text.";
+
+export function isThinkingOnlyNoTextFailureMessage(message: string | undefined): boolean {
+  if (!message) {
+    return false;
+  }
+  return message.includes(THINKING_ONLY_FAILURE_MESSAGE_MARKER);
+}
+
 export function isGenericExternalRunFailureText(text: string | undefined): boolean {
   return text?.trim() === GENERIC_EXTERNAL_RUN_FAILURE_TEXT;
 }

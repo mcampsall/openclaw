@@ -448,3 +448,119 @@ describe("createCliJsonlStreamingParser", () => {
     ]);
   });
 });
+
+describe("thinking-only Claude CLI output detection", () => {
+  it("flags hadThinkingButNoText when assistant emits only a thinking block", () => {
+    const result = parseCliJsonl(
+      [
+        JSON.stringify({ type: "init", session_id: "session-think-1" }),
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "thinking", thinking: "deliberating..." }],
+            stop_reason: "end_turn",
+          },
+        }),
+        JSON.stringify({ type: "result", result: "" }),
+      ].join("\n"),
+      {
+        command: "claude",
+        output: "jsonl",
+        sessionIdFields: ["session_id"],
+      },
+      "claude-cli",
+    );
+
+    expect(result?.text).toBe("");
+    expect(result?.hadThinkingButNoText).toBe(true);
+    expect(result?.sessionId).toBe("session-think-1");
+  });
+
+  it("does not flag hadThinkingButNoText when a text block is present alongside thinking", () => {
+    const result = parseCliJsonl(
+      [
+        JSON.stringify({ type: "init", session_id: "session-think-2" }),
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "thinking through..." },
+              { type: "text", text: "Here is the answer." },
+            ],
+            stop_reason: "end_turn",
+          },
+        }),
+        JSON.stringify({ type: "result", result: "Here is the answer." }),
+      ].join("\n"),
+      {
+        command: "claude",
+        output: "jsonl",
+        sessionIdFields: ["session_id"],
+      },
+      "claude-cli",
+    );
+
+    expect(result?.text).toBe("Here is the answer.");
+    expect(result?.hadThinkingButNoText).toBeFalsy();
+  });
+
+  it("detects thinking blocks from stream_event content_block_start records", () => {
+    const result = parseCliJsonl(
+      [
+        JSON.stringify({ type: "init", session_id: "session-stream-think" }),
+        JSON.stringify({
+          type: "stream_event",
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "thinking", thinking: "" },
+          },
+        }),
+        JSON.stringify({ type: "result", result: "" }),
+      ].join("\n"),
+      {
+        command: "claude",
+        output: "jsonl",
+        sessionIdFields: ["session_id"],
+      },
+      "claude-cli",
+    );
+
+    expect(result?.text).toBe("");
+    expect(result?.hadThinkingButNoText).toBe(true);
+  });
+
+  it("streaming parser surfaces hadThinkingButNoText when no text blocks are seen", () => {
+    const parser = createCliJsonlStreamingParser({
+      backend: {
+        command: "claude",
+        output: "jsonl",
+        sessionIdFields: ["session_id"],
+      },
+      providerId: "claude-cli",
+      onAssistantDelta: () => {},
+    });
+
+    parser.push(
+      [
+        JSON.stringify({ type: "init", session_id: "session-stream-think-2" }),
+        JSON.stringify({
+          type: "stream_event",
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "thinking", thinking: "" },
+          },
+        }),
+        JSON.stringify({ type: "result", result: "" }),
+      ].join("\n"),
+    );
+    parser.finish();
+
+    const output = parser.getOutput();
+    expect(output?.text).toBe("");
+    expect(output?.hadThinkingButNoText).toBe(true);
+  });
+});

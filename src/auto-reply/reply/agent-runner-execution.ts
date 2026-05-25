@@ -88,6 +88,8 @@ import { runCliAgentWithLifecycle } from "./agent-runner-cli-dispatch.js";
 import {
   GENERIC_EXTERNAL_RUN_FAILURE_TEXT,
   HEARTBEAT_EXTERNAL_RUN_FAILURE_TEXT,
+  isThinkingOnlyNoTextFailureMessage,
+  THINKING_ONLY_NO_TEXT_FAILURE_TEXT,
 } from "./agent-runner-failure-copy.js";
 import {
   buildEmbeddedRunExecutionParams,
@@ -571,6 +573,12 @@ function buildExternalRunFailureReply(
   options?: { includeDetails?: boolean; isHeartbeat?: boolean },
 ): ExternalRunFailureReply {
   const normalizedMessage = collapseRepeatedFailureDetail(message);
+  if (isThinkingOnlyNoTextFailureMessage(normalizedMessage)) {
+    return {
+      text: THINKING_ONLY_NO_TEXT_FAILURE_TEXT,
+      isGenericRunnerFailure: false,
+    };
+  }
   const providerRequestError = classifyProviderRequestError(normalizedMessage);
   if (providerRequestError) {
     return {

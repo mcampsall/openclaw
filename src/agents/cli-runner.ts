@@ -403,7 +403,10 @@ export async function runPreparedCliAgent(
     const output = await executePreparedCliRun(context, cliSessionIdToUse);
     const assistantText = output.text.trim();
     if (!assistantText) {
-      throw new FailoverError("CLI backend returned an empty response.", {
+      const message = output.hadThinkingButNoText
+        ? "CLI backend returned thinking blocks but no visible text."
+        : "CLI backend returned an empty response.";
+      throw new FailoverError(message, {
         reason: "empty_response",
         provider: params.provider,
         model: context.modelId,
