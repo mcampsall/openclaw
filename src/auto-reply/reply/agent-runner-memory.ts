@@ -7,6 +7,7 @@ import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
 import { ensureSelectedAgentHarnessPlugin } from "../../agents/harness/runtime-plugin.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
 import { listLegacyRuntimeModelProviderAliases } from "../../agents/model-runtime-aliases.js";
+import { resolveCliRuntimeExecutionProvider as __resolveCliExecProviderForMemoryFlush } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { resolveContextConfigProviderForRuntime } from "../../agents/openai-codex-routing.js";
 import { resolveSandboxConfigForAgent, resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
@@ -582,7 +583,16 @@ export async function runPreflightCompactionIfNeeded(params: {
     return entry ?? params.sessionEntry;
   }
 
-  const isCli = isCliProvider(params.followupRun.run.provider, params.cfg);
+  // Resolve per-model CLI runtime aliases before the memory-flush "skip if CLI"
+  // check; the bare provider name is not itself a CLI backend id.
+  const __memflushCliExecProvider1 =
+    __resolveCliExecProviderForMemoryFlush({
+      provider: params.followupRun.run.provider,
+      cfg: params.cfg,
+      agentId: params.followupRun.run.agentId,
+      modelId: params.followupRun.run.model,
+    }) ?? params.followupRun.run.provider;
+  const isCli = isCliProvider(__memflushCliExecProvider1, params.cfg);
   if (params.isHeartbeat || isCli) {
     return entry ?? params.sessionEntry;
   }
@@ -823,7 +833,15 @@ export async function runMemoryFlushIfNeeded(params: {
     return sandboxCfg.workspaceAccess === "rw";
   })();
 
-  const isCli = isCliProvider(params.followupRun.run.provider, params.cfg);
+  // Resolve per-model CLI runtime aliases before the memory-flush "skip if CLI" check.
+  const __memflushCliExecProvider2 =
+    __resolveCliExecProviderForMemoryFlush({
+      provider: params.followupRun.run.provider,
+      cfg: params.cfg,
+      agentId: params.followupRun.run.agentId,
+      modelId: params.followupRun.run.model,
+    }) ?? params.followupRun.run.provider;
+  const isCli = isCliProvider(__memflushCliExecProvider2, params.cfg);
   const canAttemptFlush = memoryFlushWritable && !params.isHeartbeat && !isCli;
   let entry =
     params.sessionEntry ??
