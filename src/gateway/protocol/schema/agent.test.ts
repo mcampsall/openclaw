@@ -59,6 +59,37 @@ describe("AgentParamsSchema", () => {
     expect(Value.Check(AgentParamsSchema, params)).toBe(false);
   });
 
+  it("accepts an explicit chatType conversation hint", () => {
+    for (const chatType of ["direct", "group", "channel"]) {
+      expect(
+        Value.Check(AgentParamsSchema, {
+          message: "hi",
+          sessionKey: "agent:main:explicit:her-app",
+          idempotencyKey: "turn-1",
+          chatType,
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects unknown chatType values and stays optional", () => {
+    expect(
+      Value.Check(AgentParamsSchema, {
+        message: "hi",
+        sessionKey: "agent:main:explicit:her-app",
+        idempotencyKey: "turn-1",
+        chatType: "internal",
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(AgentParamsSchema, {
+        message: "hi",
+        sessionKey: "agent:main:explicit:her-app",
+        idempotencyKey: "turn-1",
+      }),
+    ).toBe(true);
+  });
+
   it("accepts runtime toolsAllow, including an empty private-mode allowlist", () => {
     expect(
       Value.Check(AgentParamsSchema, {

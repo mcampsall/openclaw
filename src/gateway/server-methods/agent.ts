@@ -642,6 +642,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       groupId?: string;
       groupChannel?: string;
       groupSpace?: string;
+      chatType?: "direct" | "group" | "channel";
       lane?: string;
       extraSystemPrompt?: string;
       toolsAllow?: string[];
@@ -1576,6 +1577,7 @@ export const agentHandlers: GatewayRequestHandlers = {
               channel: resolvedChannel,
               accountId: resolvedAccountId,
               threadId: resolvedThreadId,
+              chatType: request.chatType,
               runContext: {
                 messageChannel: originMessageChannel,
                 accountId: resolvedAccountId,

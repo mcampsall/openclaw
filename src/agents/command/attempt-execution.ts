@@ -9,6 +9,7 @@ import {
   resolveSessionTranscriptFile,
 } from "../../config/sessions/transcript.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
+import { resolveSilentReplyPolicy } from "../../config/silent-reply.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
 import { readErrorName } from "../../infra/errors.js";
@@ -33,6 +34,7 @@ import { buildAgentRuntimeAuthPlan } from "../runtime-plan/auth.js";
 import { acquireSessionWriteLock, resolveSessionWriteLockOptions } from "../session-write-lock.js";
 import { buildWorkspaceSkillSnapshot } from "../skills.js";
 import { buildUsageWithNoCost } from "../stream-message-shared.js";
+import type { SilentReplyPromptMode } from "../system-prompt.types.js";
 import {
   buildClaudeCliFallbackContextPrelude,
   claudeCliSessionTranscriptHasContent,
@@ -482,6 +484,21 @@ export function runAgentAttempt(params: {
     (agentHarnessPolicy.runtime === "pi" && embeddedPiProvider !== params.providerOverride
       ? "pi"
       : undefined);
+  // Caller-declared conversation type (gateway agent RPC `chatType`). Mirrors the
+  // chat-type mapping in resolvePromptSilentReplyConversationType: direct stays
+  // direct; group/channel classify as group. A disallow policy suppresses the
+  // generic silent-token system prompt section; absent chatType keeps the default.
+  const silentReplyConversationType =
+    params.opts.chatType === "direct" ? "direct" : params.opts.chatType ? "group" : undefined;
+  let silentReplyPromptMode: SilentReplyPromptMode | undefined;
+  if (silentReplyConversationType) {
+    const silentReplyPolicy = resolveSilentReplyPolicy({
+      cfg: params.cfg,
+      sessionKey: params.sessionKey,
+      conversationType: silentReplyConversationType,
+    });
+    silentReplyPromptMode = silentReplyPolicy === "disallow" ? "none" : undefined;
+  }
   if (!isRawModelRun && isCliProvider(cliExecutionProvider, params.cfg)) {
     const cliSessionBinding = getCliSessionBinding(params.sessionEntry, cliExecutionProvider);
     const resolveReusableCliSessionBinding = async () => {
@@ -528,6 +545,7 @@ export function runAgentAttempt(params: {
         timeoutMs: params.timeoutMs,
         runId: params.runId,
         extraSystemPrompt: params.opts.extraSystemPrompt,
+        silentReplyPromptMode,
         inputProvenance: params.opts.inputProvenance,
         cliSessionId: nextCliSessionId,
         cliSessionBinding:

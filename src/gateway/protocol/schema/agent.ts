@@ -173,6 +173,10 @@ export const AgentParamsSchema = Type.Object(
     groupId: Type.Optional(Type.String()),
     groupChannel: Type.Optional(Type.String()),
     groupSpace: Type.Optional(Type.String()),
+    /** Conversation-type hint for explicit API sessions ("direct" disallows silent replies). */
+    chatType: Type.Optional(
+      Type.Union([Type.Literal("direct"), Type.Literal("group"), Type.Literal("channel")]),
+    ),
     timeout: Type.Optional(Type.Integer({ minimum: 0 })),
     bestEffortDeliver: Type.Optional(Type.Boolean()),
     lane: Type.Optional(Type.String()),
