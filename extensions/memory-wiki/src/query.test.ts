@@ -614,6 +614,95 @@ describe("searchMemoryWiki", () => {
     });
   });
 
+  async function writeBridgeSelenePage(rootDir: string): Promise<void> {
+    await fs.writeFile(
+      path.join(rootDir, "sources", "bridge-selene-dream.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "source",
+          id: "source.bridge.selene.dream",
+          title: "Memory Bridge (selene): dream",
+          sourceType: "memory-bridge",
+          sourcePath: "/tmp/selene-workspace/memory/dreams/moonlight.md",
+          bridgeRelativePath: "memory/dreams/moonlight.md",
+          bridgeWorkspaceDir: "/tmp/selene-workspace",
+          bridgeAgentIds: ["selene"],
+          updatedAt: "2026-04-05T12:00:00.000Z",
+        },
+        body: "# Memory Bridge (selene): dream\n\nmoonlight dream companion content\n",
+      }),
+      "utf8",
+    );
+  }
+
+  it("hides bridged source pages from agents not listed in bridgeAgentIds", async () => {
+    const { rootDir, config } = await createQueryVault({ initialize: true });
+    await writeBridgeSelenePage(rootDir);
+    await fs.writeFile(
+      path.join(rootDir, "sources", "shared-notes.md"),
+      renderWikiMarkdown({
+        frontmatter: { pageType: "source", id: "source.shared", title: "Shared Notes" },
+        body: "# Shared Notes\n\nmoonlight shared project notes\n",
+      }),
+      "utf8",
+    );
+
+    const workoutResults = await searchMemoryWiki({
+      config,
+      appConfig: createAppConfig(),
+      agentId: "workout",
+      query: "moonlight",
+    });
+    expect(collectWikiResultPaths(workoutResults)).toEqual(["sources/shared-notes.md"]);
+    expect(collectWikiResultPaths(workoutResults)).not.toContain("sources/bridge-selene-dream.md");
+
+    const seleneResults = await searchMemoryWiki({
+      config,
+      appConfig: createAppConfig(),
+      agentId: "selene",
+      query: "moonlight",
+    });
+    expect(collectWikiResultPaths(seleneResults).toSorted()).toEqual([
+      "sources/bridge-selene-dream.md",
+      "sources/shared-notes.md",
+    ]);
+
+    // Session-key resolution (the memory_search wiki-supplement path) scopes too.
+    const workoutSessionResults = await searchMemoryWiki({
+      config,
+      appConfig: createAppConfig(),
+      agentSessionKey: "agent:workout:abc",
+      query: "moonlight",
+    });
+    expect(collectWikiResultPaths(workoutSessionResults)).toEqual(["sources/shared-notes.md"]);
+
+    // No agent identity (owner CLI): unscoped, preserves prior behavior.
+    const unscopedResults = await searchMemoryWiki({ config, query: "moonlight" });
+    expect(collectWikiResultPaths(unscopedResults)).toContain("sources/bridge-selene-dream.md");
+  });
+
+  it("blocks wiki_get of a bridged source page for a non-owner agent", async () => {
+    const { rootDir, config } = await createQueryVault({ initialize: true });
+    await writeBridgeSelenePage(rootDir);
+
+    const blocked = await getMemoryWikiPage({
+      config,
+      appConfig: createAppConfig(),
+      agentId: "workout",
+      lookup: "sources/bridge-selene-dream.md",
+    });
+    expect(blocked).toBeNull();
+
+    const allowed = await getMemoryWikiPage({
+      config,
+      appConfig: createAppConfig(),
+      agentId: "selene",
+      lookup: "sources/bridge-selene-dream.md",
+    });
+    expect(allowed?.path).toBe("sources/bridge-selene-dream.md");
+    expect(allowed?.content).toContain("moonlight dream companion content");
+  });
+
   it("includes active memory results when shared search and all corpora are enabled", async () => {
     const { rootDir, config } = await createQueryVault({
       initialize: true,

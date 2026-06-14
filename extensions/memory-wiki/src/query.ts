@@ -1013,6 +1013,58 @@ export function isSessionMemoryPath(relPath: string): boolean {
   );
 }
 
+type WikiPageBridgeVisibility = Pick<WikiPageSummary, "sourceType" | "bridgeAgentIds">;
+
+// Bridge source pages carry one agent's private memory artifacts (dreams, chats,
+// MEMORY.md) imported into the shared vault. They must only surface to an agent
+// listed in their `bridgeAgentIds`. Non-bridge pages are shared corpus.
+function isBridgeProvenancePage(page: WikiPageBridgeVisibility): boolean {
+  return page.sourceType === "memory-bridge" || page.sourceType === "memory-bridge-events";
+}
+
+function resolveBridgeRequesterAgentId(params: {
+  appConfig?: OpenClawConfig;
+  agentId?: string;
+  agentSessionKey?: string;
+}): string {
+  if (params.agentId?.trim()) {
+    return normalizeLowercaseStringOrEmpty(params.agentId);
+  }
+  if (params.appConfig && params.agentSessionKey?.trim()) {
+    return normalizeLowercaseStringOrEmpty(
+      resolveSessionAgentId({ sessionKey: params.agentSessionKey, config: params.appConfig }),
+    );
+  }
+  return "";
+}
+
+// Mirrors the session-visibility model: only scope bridge pages when a request
+// is agent-bound (real channel turn / sandboxed). Unscoped contexts (owner CLI
+// with no agent identity) keep the prior behavior and see everything.
+function createBridgeVisibilityPredicate(params: {
+  appConfig?: OpenClawConfig;
+  agentId?: string;
+  agentSessionKey?: string;
+  sandboxed?: boolean;
+}): (page: WikiPageBridgeVisibility) => boolean {
+  if (!shouldEnforceSessionVisibility(params)) {
+    return () => true;
+  }
+  const requesterAgentId = resolveBridgeRequesterAgentId(params);
+  return (page) => {
+    if (!isBridgeProvenancePage(page)) {
+      return true;
+    }
+    // Agent-bound request whose owner we could not resolve: fail closed.
+    if (!requesterAgentId) {
+      return false;
+    }
+    return (page.bridgeAgentIds ?? []).some(
+      (id) => normalizeLowercaseStringOrEmpty(id) === requesterAgentId,
+    );
+  };
+}
+
 function shouldSearchWiki(config: ResolvedMemoryWikiConfig): boolean {
   return config.search.corpus === "wiki" || config.search.corpus === "all";
 }
@@ -1366,6 +1418,7 @@ async function searchWikiCorpus(params: {
   query: string;
   maxResults: number;
   mode: WikiSearchMode;
+  isVisible: (page: WikiPageBridgeVisibility) => boolean;
 }): Promise<WikiSearchResult[]> {
   const digest = await readQueryDigestBundle(params.rootDir);
   const candidatePaths = digest
@@ -1377,10 +1430,11 @@ async function searchWikiCorpus(params: {
       })
     : [];
   const seenPaths = new Set<string>();
-  const candidatePages =
+  const candidatePages = (
     candidatePaths.length > 0
       ? await readQueryableWikiPagesByPaths(params.rootDir, candidatePaths)
-      : await readQueryableWikiPages(params.rootDir);
+      : await readQueryableWikiPages(params.rootDir)
+  ).filter(params.isVisible);
   for (const page of candidatePages) {
     seenPaths.add(page.relativePath);
   }
@@ -1395,7 +1449,9 @@ async function searchWikiCorpus(params: {
   const remainingPaths = (await listWikiMarkdownFiles(params.rootDir)).filter(
     (relativePath) => !seenPaths.has(relativePath),
   );
-  const remainingPages = await readQueryableWikiPagesByPaths(params.rootDir, remainingPaths);
+  const remainingPages = (
+    await readQueryableWikiPagesByPaths(params.rootDir, remainingPaths)
+  ).filter(params.isVisible);
   return [
     ...results,
     ...remainingPages
@@ -1458,6 +1514,7 @@ export async function searchMemoryWiki(params: {
         query: params.query,
         maxResults,
         mode,
+        isVisible: createBridgeVisibilityPredicate(params),
       })
     : [];
 
@@ -1531,7 +1588,9 @@ export async function getMemoryWikiPage(params: {
       ? [digestLookupPage]
       : await readQueryableWikiPages(effectiveConfig.vault.path);
     const page = digestLookupPage ?? resolveQueryableWikiPageByLookup(pages, params.lookup);
-    if (page) {
+    // A bridge page the requester cannot see is treated as absent (do not reveal
+    // its existence); fall through to shared-memory lookup / not-found.
+    if (page && createBridgeVisibilityPredicate(params)(page)) {
       const parsed = parseWikiMarkdown(page.raw);
       const lines = parsed.body.split(/\r?\n/);
       const totalLines = lines.length;
