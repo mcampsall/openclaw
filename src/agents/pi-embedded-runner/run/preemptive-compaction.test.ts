@@ -4,6 +4,7 @@ import "../../test-helpers/pi-coding-agent-token-mock.js";
 import { estimateToolResultReductionPotential } from "../tool-result-truncation.js";
 
 let PREEMPTIVE_OVERFLOW_ERROR_TEXT: typeof import("./preemptive-compaction.js").PREEMPTIVE_OVERFLOW_ERROR_TEXT;
+let estimatePrePromptChars: typeof import("./preemptive-compaction.js").estimatePrePromptChars;
 let estimatePrePromptTokens: typeof import("./preemptive-compaction.js").estimatePrePromptTokens;
 let shouldPreemptivelyCompactBeforePrompt: typeof import("./preemptive-compaction.js").shouldPreemptivelyCompactBeforePrompt;
 
@@ -11,6 +12,7 @@ beforeAll(async () => {
   vi.resetModules();
   ({
     PREEMPTIVE_OVERFLOW_ERROR_TEXT,
+    estimatePrePromptChars,
     estimatePrePromptTokens,
     shouldPreemptivelyCompactBeforePrompt,
   } = await import("./preemptive-compaction.js"));
@@ -65,6 +67,21 @@ describe("preemptive-compaction", () => {
     expect(larger).toBeGreaterThan(smaller);
   });
 
+  it("raises the character estimate as prompt-side content grows", () => {
+    const smaller = estimatePrePromptChars({
+      messages: [makeAssistantHistory("short history")],
+      systemPrompt: "sys",
+      prompt: "hello",
+    });
+    const larger = estimatePrePromptChars({
+      messages: [makeAssistantHistory(verboseHistory)],
+      systemPrompt: verboseSystem,
+      prompt: verbosePrompt,
+    });
+
+    expect(larger).toBeGreaterThan(smaller);
+  });
+
   it("requests preemptive compaction when the reserve-based prompt budget would be exceeded", () => {
     const result = shouldPreemptivelyCompactBeforePrompt({
       messages: [makeAssistantHistory(verboseHistory)],
@@ -91,6 +108,24 @@ describe("preemptive-compaction", () => {
     expect(result.shouldCompact).toBe(false);
     expect(result.route).toBe("fits");
     expect(result.estimatedPromptTokens).toBeLessThan(result.promptBudgetBeforeReserve);
+    expect(result.overflowChars).toBe(0);
+  });
+
+  it("requests preemptive compaction when a character ceiling would be exceeded", () => {
+    const result = shouldPreemptivelyCompactBeforePrompt({
+      messages: [makeAssistantHistory("x".repeat(900_000))],
+      systemPrompt: "sys",
+      prompt: "hello",
+      contextTokenBudget: 1_000_000,
+      reserveTokens: 20_000,
+      maxPromptChars: 850_000,
+    });
+
+    expect(result.shouldCompact).toBe(true);
+    expect(result.route).toBe("compact_only");
+    expect(result.estimatedPromptTokens).toBeLessThan(result.promptBudgetBeforeReserve);
+    expect(result.estimatedPromptChars).toBeGreaterThan(850_000);
+    expect(result.overflowChars).toBeGreaterThan(0);
   });
 
   it("uses the larger unwindowed message estimate when explicitly provided", () => {

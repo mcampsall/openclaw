@@ -432,6 +432,7 @@ export {
 };
 
 const MAX_BTW_SNAPSHOT_MESSAGES = 100;
+const CODEX_APP_SERVER_PROMPT_CHAR_PRECHECK_LIMIT = 850_000;
 const TOOL_SEARCH_CONTROL_ALLOWLIST_NAMES = [
   TOOL_SEARCH_CODE_MODE_TOOL_NAME,
   TOOL_SEARCH_RAW_TOOL_NAME,
@@ -3954,6 +3955,9 @@ export async function runEmbeddedAttempt(
                   cfg: params.config,
                   agentId: sessionAgentId,
                 }),
+                ...(params.model.api === "openai-codex-responses"
+                  ? { maxPromptChars: CODEX_APP_SERVER_PROMPT_CHAR_PRECHECK_LIMIT }
+                  : {}),
               });
           if (preemptiveCompaction?.route === "truncate_tool_results_only") {
             const toolResultMaxChars = resolveLiveToolResultMaxChars({
@@ -3980,8 +3984,10 @@ export async function runEmbeddedAttempt(
                   `${params.provider}/${params.modelId} route=${preemptiveCompaction.route} ` +
                   `truncatedCount=${truncationResult.truncatedCount} ` +
                   `estimatedPromptTokens=${preemptiveCompaction.estimatedPromptTokens} ` +
+                  `estimatedPromptChars=${preemptiveCompaction.estimatedPromptChars} ` +
                   `promptBudgetBeforeReserve=${preemptiveCompaction.promptBudgetBeforeReserve} ` +
                   `overflowTokens=${preemptiveCompaction.overflowTokens} ` +
+                  `overflowChars=${preemptiveCompaction.overflowChars} ` +
                   `toolResultReducibleChars=${preemptiveCompaction.toolResultReducibleChars} ` +
                   `effectiveReserveTokens=${preemptiveCompaction.effectiveReserveTokens} ` +
                   `sessionFile=${params.sessionFile}`,
@@ -4012,8 +4018,10 @@ export async function runEmbeddedAttempt(
                 `provider=${params.provider}/${params.modelId} ` +
                 `route=${preemptiveCompaction.route} ` +
                 `estimatedPromptTokens=${preemptiveCompaction.estimatedPromptTokens} ` +
+                `estimatedPromptChars=${preemptiveCompaction.estimatedPromptChars} ` +
                 `promptBudgetBeforeReserve=${preemptiveCompaction.promptBudgetBeforeReserve} ` +
                 `overflowTokens=${preemptiveCompaction.overflowTokens} ` +
+                `overflowChars=${preemptiveCompaction.overflowChars} ` +
                 `toolResultReducibleChars=${preemptiveCompaction.toolResultReducibleChars} ` +
                 `reserveTokens=${reserveTokens} ` +
                 `effectiveReserveTokens=${preemptiveCompaction.effectiveReserveTokens} ` +
