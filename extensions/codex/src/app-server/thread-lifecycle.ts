@@ -70,6 +70,7 @@ export type CodexPluginThreadConfigProvider = {
 };
 
 export const CODEX_CODE_MODE_THREAD_CONFIG: JsonObject = {
+  project_doc_max_bytes: 0,
   "features.code_mode": true,
   "features.code_mode_only": false,
 };
@@ -585,7 +586,7 @@ export function buildThreadStartParams(
     developerInstructions: options.developerInstructions ?? buildDeveloperInstructions(params),
     dynamicTools: options.dynamicTools,
     experimentalRawEvents: true,
-    persistExtendedHistory: true,
+    persistExtendedHistory: false,
   };
 }
 
@@ -619,7 +620,7 @@ export function buildThreadResumeParams(
       nativeCodeModeEnabled: options.nativeCodeModeEnabled,
     }),
     developerInstructions: options.developerInstructions ?? buildDeveloperInstructions(params),
-    persistExtendedHistory: true,
+    persistExtendedHistory: false,
   };
 }
 

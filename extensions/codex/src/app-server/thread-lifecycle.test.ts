@@ -81,11 +81,13 @@ describe("Codex app-server native code mode config", () => {
     });
 
     expect(request.config).toEqual({
+      project_doc_max_bytes: 0,
       "features.hooks": true,
       apps: { _default: { enabled: false } },
       "features.code_mode": true,
       "features.code_mode_only": false,
     });
+    expect(request.persistExtendedHistory).toBe(false);
   });
 
   it("allows thread config to opt into Codex code-mode-only", () => {
@@ -100,6 +102,7 @@ describe("Codex app-server native code mode config", () => {
     });
 
     expect(request.config).toEqual({
+      project_doc_max_bytes: 0,
       "features.code_mode": true,
       "features.code_mode_only": true,
     });
@@ -113,9 +116,11 @@ describe("Codex app-server native code mode config", () => {
     });
 
     expect(request.config).toEqual({
+      project_doc_max_bytes: 0,
       "features.code_mode": true,
       "features.code_mode_only": false,
     });
+    expect(request.persistExtendedHistory).toBe(false);
   });
 
   it("disables Codex native code mode on thread/start when runtime policy denies it", () => {
@@ -132,6 +137,7 @@ describe("Codex app-server native code mode config", () => {
     });
 
     expect(request.config).toEqual({
+      project_doc_max_bytes: 0,
       "features.code_mode": false,
       "features.code_mode_only": false,
     });
@@ -146,6 +152,7 @@ describe("Codex app-server native code mode config", () => {
     });
 
     expect(request.config).toEqual({
+      project_doc_max_bytes: 0,
       "features.code_mode": false,
       "features.code_mode_only": false,
     });
@@ -178,7 +185,7 @@ describe("Codex app-server native code mode config", () => {
     });
   });
 
-  it("keeps native Codex project docs enabled when context is not lightweight", () => {
+  it("keeps explicit native Codex project doc limits when context is not lightweight", () => {
     const request = buildThreadResumeParams(
       createAttemptParams({ provider: "openai", bootstrapContextRunKind: "cron" }),
       {
