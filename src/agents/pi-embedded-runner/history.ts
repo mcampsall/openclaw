@@ -58,13 +58,10 @@ export function getHistoryLimitFromSessionKey(
     return undefined;
   }
 
-  const kind = normalizeOptionalLowercaseString(providerParts[1]);
-  const userIdRaw = providerParts.slice(2).join(":");
-  const userId = stripThreadSuffix(userIdRaw);
-
   const resolveProviderConfig = (
     cfg: OpenClawConfig | undefined,
     providerId: string,
+    accountId?: string,
   ):
     | {
         historyLimit?: number;
@@ -85,16 +82,45 @@ export function getHistoryLimitFromSessionKey(
       if (!value || typeof value !== "object" || Array.isArray(value)) {
         return undefined;
       }
-      return value as {
+      const providerConfig = value as {
         historyLimit?: number;
         dmHistoryLimit?: number;
         dms?: Record<string, { historyLimit?: number }>;
+        accounts?: Record<
+          string,
+          {
+            historyLimit?: number;
+            dmHistoryLimit?: number;
+            dms?: Record<string, { historyLimit?: number }>;
+          }
+        >;
       };
+      if (accountId && providerConfig.accounts?.[accountId]) {
+        return providerConfig.accounts[accountId];
+      }
+      return providerConfig;
     }
     return undefined;
   };
 
-  const providerConfig = resolveProviderConfig(config, provider);
+  const knownKinds = new Set(["dm", "direct", "channel", "group"]);
+  let kind = normalizeOptionalLowercaseString(providerParts[1]);
+  let accountId: string | undefined;
+  let userIdStart = 2;
+
+  if (!knownKinds.has(kind ?? "") && providerParts.length >= 3) {
+    const candidateKind = normalizeOptionalLowercaseString(providerParts[2]);
+    if (knownKinds.has(candidateKind ?? "")) {
+      accountId = providerParts[1];
+      kind = candidateKind;
+      userIdStart = 3;
+    }
+  }
+
+  const userIdRaw = providerParts.slice(userIdStart).join(":");
+  const userId = stripThreadSuffix(userIdRaw);
+
+  const providerConfig = resolveProviderConfig(config, provider, accountId);
   if (!providerConfig) {
     return undefined;
   }

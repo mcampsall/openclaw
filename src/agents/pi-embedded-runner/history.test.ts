@@ -44,6 +44,31 @@ describe("getHistoryLimitFromSessionKey", () => {
     expect(getHistoryLimitFromSessionKey("agent:main:telegram:direct:123", config)).toBe(10);
   });
 
+  it("uses account-level history limits for multi-account direct sessions", () => {
+    const config = {
+      channels: {
+        telegram: {
+          dmHistoryLimit: 30,
+          accounts: {
+            workout: {
+              dmHistoryLimit: 8,
+              dms: {
+                "5657125310": { historyLimit: 4 },
+              },
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(
+      getHistoryLimitFromSessionKey("agent:workout:telegram:workout:direct:7950705685", config),
+    ).toBe(8);
+    expect(
+      getHistoryLimitFromSessionKey("agent:workout:telegram:workout:direct:5657125310", config),
+    ).toBe(4);
+  });
+
   it("strips numeric thread and topic suffixes from direct message session keys", () => {
     const config = {
       channels: { telegram: { dmHistoryLimit: 10, dms: { "123": { historyLimit: 7 } } } },
