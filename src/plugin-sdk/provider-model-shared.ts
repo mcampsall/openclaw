@@ -91,7 +91,12 @@ export {
 } from "../plugins/provider-model-helpers.js";
 import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
 
-const CLAUDE_OPUS_47_MODEL_PREFIXES = ["claude-opus-4-7", "claude-opus-4.7"] as const;
+const CLAUDE_OPUS_HIGH_END_MODEL_PREFIXES = [
+  "claude-opus-4-8",
+  "claude-opus-4.8",
+  "claude-opus-4-7",
+  "claude-opus-4.7",
+] as const;
 const CLAUDE_ADAPTIVE_THINKING_DEFAULT_MODEL_PREFIXES = [
   "claude-opus-4-6",
   "claude-opus-4.6",
@@ -128,8 +133,8 @@ function matchesClaudeModelPrefix(modelId: string, prefixes: readonly string[]):
   return Boolean(lower && prefixes.some((prefix) => lower.startsWith(prefix)));
 }
 
-function isClaudeOpus47ModelId(modelId: string): boolean {
-  return matchesClaudeModelPrefix(modelId, CLAUDE_OPUS_47_MODEL_PREFIXES);
+function isClaudeHighEndOpusModelId(modelId: string): boolean {
+  return matchesClaudeModelPrefix(modelId, CLAUDE_OPUS_HIGH_END_MODEL_PREFIXES);
 }
 
 /** @deprecated Anthropic provider-owned model helper; do not use from third-party plugins. */
@@ -139,7 +144,7 @@ export function isClaudeAdaptiveThinkingDefaultModelId(modelId: string): boolean
 
 /** @deprecated Anthropic provider-owned model helper; do not use from third-party plugins. */
 export function resolveClaudeThinkingProfile(modelId: string): ProviderThinkingProfile {
-  if (isClaudeOpus47ModelId(modelId)) {
+  if (isClaudeHighEndOpusModelId(modelId)) {
     return {
       levels: [...BASE_CLAUDE_THINKING_LEVELS, { id: "xhigh" }, { id: "adaptive" }, { id: "max" }],
       defaultLevel: "off",

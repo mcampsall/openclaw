@@ -45,12 +45,22 @@ import { wrapAnthropicProviderStream } from "./stream-wrappers.js";
 
 const PROVIDER_ID = "anthropic";
 type UpsertAuthProfileParams = Parameters<typeof upsertAuthProfileWithLock>[0];
-const DEFAULT_ANTHROPIC_MODEL = "anthropic/claude-opus-4-7";
+const DEFAULT_ANTHROPIC_MODEL = "anthropic/claude-opus-4-8";
+const ANTHROPIC_OPUS_48_MODEL_ID = "claude-opus-4-8";
+const ANTHROPIC_OPUS_48_DOT_MODEL_ID = "claude-opus-4.8";
 const ANTHROPIC_OPUS_47_MODEL_ID = "claude-opus-4-7";
 const ANTHROPIC_OPUS_47_DOT_MODEL_ID = "claude-opus-4.7";
-const ANTHROPIC_OPUS_47_CONTEXT_TOKENS = 1_048_576;
+const ANTHROPIC_OPUS_HIGH_CONTEXT_TOKENS = 1_048_576;
 const ANTHROPIC_OPUS_46_MODEL_ID = "claude-opus-4-6";
 const ANTHROPIC_OPUS_46_DOT_MODEL_ID = "claude-opus-4.6";
+const ANTHROPIC_OPUS_48_TEMPLATE_MODEL_IDS = [
+  ANTHROPIC_OPUS_47_MODEL_ID,
+  ANTHROPIC_OPUS_47_DOT_MODEL_ID,
+  ANTHROPIC_OPUS_46_MODEL_ID,
+  ANTHROPIC_OPUS_46_DOT_MODEL_ID,
+  "claude-opus-4-5",
+  "claude-opus-4.5",
+] as const;
 const ANTHROPIC_OPUS_47_TEMPLATE_MODEL_IDS = [
   ANTHROPIC_OPUS_46_MODEL_ID,
   ANTHROPIC_OPUS_46_DOT_MODEL_ID,
@@ -62,6 +72,7 @@ const ANTHROPIC_SONNET_46_MODEL_ID = "claude-sonnet-4-6";
 const ANTHROPIC_SONNET_46_DOT_MODEL_ID = "claude-sonnet-4.6";
 const ANTHROPIC_SONNET_TEMPLATE_MODEL_IDS = ["claude-sonnet-4-5", "claude-sonnet-4.5"] as const;
 const ANTHROPIC_MODERN_MODEL_PREFIXES = [
+  "claude-opus-4-8",
   "claude-opus-4-7",
   "claude-opus-4-6",
   "claude-sonnet-4-6",
@@ -263,6 +274,14 @@ function resolveAnthropicForwardCompatModel(
   return (
     resolveAnthropic46ForwardCompatModel({
       ctx,
+      dashModelId: ANTHROPIC_OPUS_48_MODEL_ID,
+      dotModelId: ANTHROPIC_OPUS_48_DOT_MODEL_ID,
+      dashTemplateId: ANTHROPIC_OPUS_47_MODEL_ID,
+      dotTemplateId: ANTHROPIC_OPUS_47_DOT_MODEL_ID,
+      fallbackTemplateIds: ANTHROPIC_OPUS_48_TEMPLATE_MODEL_IDS,
+    }) ??
+    resolveAnthropic46ForwardCompatModel({
+      ctx,
       dashModelId: ANTHROPIC_OPUS_47_MODEL_ID,
       dotModelId: ANTHROPIC_OPUS_47_DOT_MODEL_ID,
       dashTemplateId: ANTHROPIC_OPUS_46_MODEL_ID,
@@ -288,9 +307,11 @@ function resolveAnthropicForwardCompatModel(
   );
 }
 
-function isAnthropicOpus47Model(modelId: string): boolean {
+function isAnthropicHighContextOpusModel(modelId: string): boolean {
   const normalized = normalizeLowercaseStringOrEmpty(modelId);
   return (
+    normalized.startsWith(ANTHROPIC_OPUS_48_MODEL_ID) ||
+    normalized.startsWith(ANTHROPIC_OPUS_48_DOT_MODEL_ID) ||
     normalized.startsWith(ANTHROPIC_OPUS_47_MODEL_ID) ||
     normalized.startsWith(ANTHROPIC_OPUS_47_DOT_MODEL_ID)
   );
@@ -332,13 +353,13 @@ function hasConfiguredModelContextOverride(
   return false;
 }
 
-function applyAnthropicOpus47ContextWindow(params: {
+function applyAnthropicHighContextOpusWindow(params: {
   config?: ProviderNormalizeResolvedModelContext["config"];
   provider: string;
   modelId: string;
   model: ProviderRuntimeModel;
 }): ProviderRuntimeModel | undefined {
-  if (!isAnthropicOpus47Model(params.modelId)) {
+  if (!isAnthropicHighContextOpusModel(params.modelId)) {
     return undefined;
   }
   if (hasConfiguredModelContextOverride(params.config, params.provider, params.modelId)) {
@@ -346,12 +367,12 @@ function applyAnthropicOpus47ContextWindow(params: {
   }
   const nextContextWindow = Math.max(
     params.model.contextWindow ?? 0,
-    ANTHROPIC_OPUS_47_CONTEXT_TOKENS,
+    ANTHROPIC_OPUS_HIGH_CONTEXT_TOKENS,
   );
   const nextContextTokens =
     typeof params.model.contextTokens === "number"
-      ? Math.max(params.model.contextTokens, ANTHROPIC_OPUS_47_CONTEXT_TOKENS)
-      : ANTHROPIC_OPUS_47_CONTEXT_TOKENS;
+      ? Math.max(params.model.contextTokens, ANTHROPIC_OPUS_HIGH_CONTEXT_TOKENS)
+      : ANTHROPIC_OPUS_HIGH_CONTEXT_TOKENS;
   if (
     nextContextWindow === params.model.contextWindow &&
     nextContextTokens === params.model.contextTokens
@@ -577,7 +598,7 @@ export function buildAnthropicProvider(): ProviderPlugin {
         return undefined;
       }
       return (
-        applyAnthropicOpus47ContextWindow({
+        applyAnthropicHighContextOpusWindow({
           config: ctx.config,
           provider: ctx.provider,
           modelId: ctx.modelId,
@@ -585,7 +606,7 @@ export function buildAnthropicProvider(): ProviderPlugin {
         }) ?? model
       );
     },
-    normalizeResolvedModel: (ctx) => applyAnthropicOpus47ContextWindow(ctx),
+    normalizeResolvedModel: (ctx) => applyAnthropicHighContextOpusWindow(ctx),
     resolveSyntheticAuth: ({ provider }) =>
       normalizeLowercaseStringOrEmpty(provider) === CLAUDE_CLI_BACKEND_ID
         ? resolveClaudeCliSyntheticAuth()

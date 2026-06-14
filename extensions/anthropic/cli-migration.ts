@@ -8,7 +8,11 @@ import {
   readClaudeCliCredentialsForSetup,
   readClaudeCliCredentialsForSetupNonInteractive,
 } from "./cli-auth-seam.js";
-import { CLAUDE_CLI_BACKEND_ID, CLAUDE_CLI_DEFAULT_ALLOWLIST_REFS } from "./cli-shared.js";
+import {
+  CLAUDE_CLI_BACKEND_ID,
+  CLAUDE_CLI_DEFAULT_ALLOWLIST_REFS,
+  CLAUDE_CLI_DEFAULT_MODEL_REF,
+} from "./cli-shared.js";
 
 type AgentDefaultsModel = NonNullable<NonNullable<OpenClawConfig["agents"]>["defaults"]>["model"];
 type AgentDefaultsModels = NonNullable<NonNullable<OpenClawConfig["agents"]>["defaults"]>["models"];
@@ -229,7 +233,9 @@ export function buildAnthropicCliMigrationResult(
     ...rewrittenModel.runtimeRefs,
     ...rewrittenModels.migrated,
   ]);
-  const defaultModel = rewrittenModel.primary ?? "anthropic/claude-opus-4-7";
+  const defaultModel =
+    rewrittenModel.primary ??
+    `anthropic/${CLAUDE_CLI_DEFAULT_MODEL_REF.slice(CLAUDE_CLI_BACKEND_ID.length + 1)}`;
 
   return {
     profiles: buildClaudeCliAuthProfiles(credential),
