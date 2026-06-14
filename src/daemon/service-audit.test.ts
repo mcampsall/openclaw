@@ -125,9 +125,7 @@ describe("auditGatewayServiceConfig", () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-service-audit-home-"));
     try {
       const servicePath = buildMinimalServicePath({ platform: "darwin", env: { HOME: home } });
-      expect(servicePath).toBe(
-        "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-      );
+      expect(servicePath).toBe("/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin");
 
       const audit = await auditGatewayServiceConfig({
         env: { HOME: home },
@@ -144,7 +142,7 @@ describe("auditGatewayServiceConfig", () => {
     }
   });
 
-  it("requires Homebrew directories in canonical macOS gateway service PATH", async () => {
+  it("does not require Homebrew directories in canonical macOS gateway service PATH", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-service-audit-home-"));
     try {
       const audit = await auditGatewayServiceConfig({
@@ -159,8 +157,7 @@ describe("auditGatewayServiceConfig", () => {
       const issue = audit.issues.find(
         (entry) => entry.code === SERVICE_AUDIT_CODES.gatewayPathMissingDirs,
       );
-      expect(issue?.message).toContain("/opt/homebrew/bin");
-      expect(issue?.message).toContain("/opt/homebrew/sbin");
+      expect(issue).toBeUndefined();
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }
