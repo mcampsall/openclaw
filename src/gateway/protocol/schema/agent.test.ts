@@ -58,4 +58,23 @@ describe("AgentParamsSchema", () => {
 
     expect(Value.Check(AgentParamsSchema, params)).toBe(false);
   });
+
+  it("accepts runtime toolsAllow, including an empty private-mode allowlist", () => {
+    expect(
+      Value.Check(AgentParamsSchema, {
+        message: "hi",
+        sessionKey: "agent:main:explicit:her-app-private-1",
+        idempotencyKey: "turn-private",
+        toolsAllow: [],
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(AgentParamsSchema, {
+        message: "hi",
+        sessionKey: "agent:main:explicit:her-app",
+        idempotencyKey: "turn-read-only",
+        toolsAllow: ["memory_search", "memory_get"],
+      }),
+    ).toBe(true);
+  });
 });

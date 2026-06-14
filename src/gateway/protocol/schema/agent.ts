@@ -197,6 +197,8 @@ export const AgentParamsSchema = Type.Object(
     sourceReplyDeliveryMode: Type.Optional(
       Type.Union([Type.Literal("automatic"), Type.Literal("message_tool_only")]),
     ),
+    /** Optional runtime tool allow-list; [] means no callable tools for this run. */
+    toolsAllow: Type.Optional(Type.Array(Type.String())),
     voiceWakeTrigger: Type.Optional(Type.String()),
     idempotencyKey: NonEmptyString,
     label: Type.Optional(SessionLabelString),

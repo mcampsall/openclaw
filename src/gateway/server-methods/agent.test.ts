@@ -1425,6 +1425,21 @@ describe("gateway agent handler", () => {
     expect(call.cleanupBundleMcpOnRunEnd).toBe(true);
   });
 
+  it("forwards runtime toolsAllow from agent RPC into the runner", async () => {
+    primeMainAgentRun();
+    mocks.agentCommand.mockClear();
+
+    await invokeAgent({
+      message: "private tool gate probe",
+      sessionKey: "agent:main:explicit:her-app-private-test",
+      idempotencyKey: "test-idem-agent-tools-allow-empty",
+      toolsAllow: [],
+    });
+
+    const call = await waitForAgentCommandCall();
+    expect(call.toolsAllow).toStrictEqual([]);
+  });
+
   it.each(
     (["channel", "replyChannel"] as const).flatMap((field) =>
       (["heartbeat", "cron", "webhook", "voice"] as const).map(

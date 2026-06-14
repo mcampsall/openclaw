@@ -644,6 +644,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       groupSpace?: string;
       lane?: string;
       extraSystemPrompt?: string;
+      toolsAllow?: string[];
       modelRun?: boolean;
       promptMode?: "full" | "minimal" | "none";
       bootstrapContextMode?: "full" | "lightweight";
@@ -1602,6 +1603,7 @@ export const agentHandlers: GatewayRequestHandlers = {
               bootstrapContextRunKind: request.bootstrapContextRunKind,
               acpTurnSource: request.acpTurnSource,
               internalEvents: request.internalEvents,
+              toolsAllow: request.toolsAllow,
               inputProvenance,
               sourceReplyDeliveryMode: request.sourceReplyDeliveryMode,
               suppressPromptPersistence: shouldSuppressAgentPromptPersistence({
