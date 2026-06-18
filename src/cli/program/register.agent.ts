@@ -24,7 +24,9 @@ export function registerAgentCommands(program: Command, args: { agentChannelOpti
   program
     .command("agent")
     .description("Run an agent turn via the Gateway (use --local for embedded)")
-    .requiredOption("-m, --message <text>", "Message body for the agent")
+    .option("-m, --message <text>", "Message body for the agent")
+    .option("--message-file <path>", "Read the message body from a UTF-8 file")
+    .option("--message-stdin", "Read the message body from stdin", false)
     .option("-t, --to <number>", "Recipient number in E.164 used to derive the session key")
     .option("--session-id <id>", "Use an explicit session id")
     .option("--agent <id>", "Agent id (overrides routing bindings)")
@@ -60,6 +62,8 @@ ${theme.heading("Examples:")}
 ${formatHelpExamples([
   ['openclaw agent --to +15555550123 --message "status update"', "Start a new session."],
   ['openclaw agent --agent ops --message "Summarize logs"', "Use a specific agent."],
+  ["cat prompt.txt | openclaw agent --agent ops --message-stdin", "Read a message from stdin."],
+  ["openclaw agent --agent ops --message-file prompt.txt", "Read a message from a file."],
   [
     'openclaw agent --session-id 1234 --message "Summarize inbox" --thinking medium',
     "Target a session with explicit thinking level.",

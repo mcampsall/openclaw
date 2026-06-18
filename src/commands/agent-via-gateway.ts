@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import { listAgentIds } from "../agents/agent-scope.js";
 import { formatCliCommand } from "../cli/command-format.js";
@@ -41,9 +42,12 @@ const EMBEDDED_FALLBACK_META = {
   fallbackFrom: "gateway",
 } as const;
 const GATEWAY_TIMEOUT_FALLBACK_SESSION_PREFIX = "gateway-fallback-";
+const MAX_AGENT_MESSAGE_INPUT_BYTES = 10 * 1024 * 1024;
 
 type AgentCliOpts = {
-  message: string;
+  message?: string;
+  messageFile?: string;
+  messageStdin?: boolean;
   agent?: string;
   model?: string;
   to?: string;
@@ -64,6 +68,8 @@ type AgentCliOpts = {
   local?: boolean;
 };
 
+type ResolvedAgentCliOpts = AgentCliOpts & { message: string };
+
 function protectJsonStdout(opts: Pick<AgentCliOpts, "json">): void {
   if (opts.json === true) {
     routeLogsToStderr();
@@ -81,6 +87,86 @@ function parseTimeoutSeconds(opts: { cfg: OpenClawConfig; timeout?: string }) {
     );
   }
   return raw;
+}
+
+function formatMissingMessageError(): string {
+  return `Missing message. Use ${formatCliCommand('openclaw agent --message "..." --agent <id>')}, --message-file <path>, or --message-stdin.`;
+}
+
+function formatMessageInputSizeError(source: string): string {
+  return `Message input from ${source} exceeds ${MAX_AGENT_MESSAGE_INPUT_BYTES} bytes. Use a smaller prompt or split the request.`;
+}
+
+function assertAgentMessageInputSize(value: string, source: string): void {
+  if (Buffer.byteLength(value, "utf8") > MAX_AGENT_MESSAGE_INPUT_BYTES) {
+    throw new Error(formatMessageInputSizeError(source));
+  }
+}
+
+function readAgentMessageFile(filePath: string): string {
+  const stat = statSync(filePath);
+  if (stat.size > MAX_AGENT_MESSAGE_INPUT_BYTES) {
+    throw new Error(formatMessageInputSizeError("--message-file"));
+  }
+  const value = readFileSync(filePath, "utf8");
+  assertAgentMessageInputSize(value, "--message-file");
+  return value;
+}
+
+async function readAgentMessageStdin(): Promise<string> {
+  if (process.stdin.isTTY) {
+    throw new Error(
+      "--message-stdin requires piped input. Pipe a prompt on stdin or use --message-file <path>.",
+    );
+  }
+  const chunks: string[] = [];
+  let byteLength = 0;
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) {
+    const text =
+      typeof chunk === "string" ? chunk : Buffer.from(chunk as Uint8Array).toString("utf8");
+    byteLength += Buffer.byteLength(text, "utf8");
+    if (byteLength > MAX_AGENT_MESSAGE_INPUT_BYTES) {
+      throw new Error(formatMessageInputSizeError("--message-stdin"));
+    }
+    chunks.push(text);
+  }
+  return chunks.join("");
+}
+
+async function resolveAgentCliMessageInput(opts: AgentCliOpts): Promise<ResolvedAgentCliOpts> {
+  const messageFile = normalizeOptionalString(opts.messageFile);
+  const modes = [
+    typeof opts.message === "string",
+    Boolean(messageFile),
+    opts.messageStdin === true,
+  ].filter(Boolean);
+  if (modes.length !== 1) {
+    throw new Error(
+      "Choose exactly one message input: --message, --message-file, or --message-stdin.",
+    );
+  }
+
+  let rawMessage = "";
+  if (typeof opts.message === "string") {
+    rawMessage = opts.message;
+    assertAgentMessageInputSize(rawMessage, "--message");
+  } else if (messageFile) {
+    rawMessage = readAgentMessageFile(messageFile);
+  } else {
+    rawMessage = await readAgentMessageStdin();
+  }
+
+  const message = rawMessage.trim();
+  if (!message) {
+    throw new Error(formatMissingMessageError());
+  }
+  return {
+    ...opts,
+    message,
+    messageFile: undefined,
+    messageStdin: undefined,
+  };
 }
 
 function formatPayloadForLog(payload: {
@@ -140,13 +226,11 @@ function buildGatewayJsonResponse(response: GatewayAgentResponse): GatewayAgentR
   };
 }
 
-async function agentViaGatewayCommand(opts: AgentCliOpts, runtime: RuntimeEnv) {
+async function agentViaGatewayCommand(opts: ResolvedAgentCliOpts, runtime: RuntimeEnv) {
   protectJsonStdout(opts);
-  const body = (opts.message ?? "").trim();
+  const body = opts.message.trim();
   if (!body) {
-    throw new Error(
-      `Missing message. Use ${formatCliCommand('openclaw agent --message "..." --agent <id>')} or pass --to/--session-id for an existing conversation.`,
-    );
+    throw new Error(formatMissingMessageError());
   }
   if (!opts.to && !opts.sessionId && !opts.agent) {
     throw new Error(
@@ -248,22 +332,23 @@ async function agentViaGatewayCommand(opts: AgentCliOpts, runtime: RuntimeEnv) {
 
 export async function agentCliCommand(opts: AgentCliOpts, runtime: RuntimeEnv, deps?: CliDeps) {
   protectJsonStdout(opts);
+  const resolvedOpts = await resolveAgentCliMessageInput(opts);
   const localOpts = {
-    ...opts,
-    agentId: opts.agent,
-    replyAccountId: opts.replyAccount,
+    ...resolvedOpts,
+    agentId: resolvedOpts.agent,
+    replyAccountId: resolvedOpts.replyAccount,
     cleanupBundleMcpOnRunEnd: true,
     cleanupCliLiveSessionOnRunEnd: true,
   };
-  if (opts.local === true) {
+  if (resolvedOpts.local === true) {
     return await agentCommand(localOpts, runtime, deps);
   }
 
   try {
-    return await agentViaGatewayCommand(opts, runtime);
+    return await agentViaGatewayCommand(resolvedOpts, runtime);
   } catch (err) {
     if (isGatewayAgentTimeoutError(err)) {
-      const fallbackSession = createGatewayTimeoutFallbackSession(opts.agent);
+      const fallbackSession = createGatewayTimeoutFallbackSession(resolvedOpts.agent);
       runtime.error?.(
         `EMBEDDED FALLBACK: Gateway agent timed out; running embedded agent with fresh session ${fallbackSession.sessionId}: ${String(err)}`,
       );
