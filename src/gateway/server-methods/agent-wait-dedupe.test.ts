@@ -70,6 +70,42 @@ describe("agent wait dedupe helper", () => {
     expect(__testing.getWaiterCount(runId)).toBe(0);
   });
 
+  it("waits for terminal dedupe without a duration timeout when timeoutMs is 0", async () => {
+    const dedupe = new Map();
+    const runId = "run-no-duration-timeout";
+    const wait = waitForTerminalGatewayDedupe({
+      dedupe,
+      runId,
+      timeoutMs: 0,
+    });
+
+    await Promise.resolve();
+    expect(__testing.getWaiterCount(runId)).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(__testing.getWaiterCount(runId)).toBe(1);
+
+    setRunEntry({
+      dedupe,
+      kind: "agent",
+      runId,
+      payload: {
+        runId,
+        status: "ok",
+        startedAt: 100,
+        endedAt: 200,
+      },
+    });
+
+    await expect(wait).resolves.toEqual({
+      status: "ok",
+      startedAt: 100,
+      endedAt: 200,
+      error: undefined,
+    });
+    expect(__testing.getWaiterCount(runId)).toBe(0);
+  });
+
   it("preserves structured yield metadata from terminal agent results", () => {
     const dedupe = new Map();
     const runId = "run-yielded";

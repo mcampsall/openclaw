@@ -94,6 +94,36 @@ describe("waitForAgentJob", () => {
     return waitPromise;
   }
 
+  it("waits for lifecycle completion without a duration timeout when timeoutMs is 0", async () => {
+    vi.useFakeTimers();
+    try {
+      const runId = `run-no-duration-timeout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const waitPromise = waitForAgentJob({ runId, timeoutMs: 0 });
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: { phase: "start", startedAt: 100 },
+      });
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: { phase: "end", endedAt: 200 },
+      });
+
+      const snapshot = await waitPromise;
+      expectRecordFields(snapshot, {
+        status: "ok",
+        startedAt: 100,
+        endedAt: 200,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("maps lifecycle end events with aborted=true to timeout after the retry grace window", async () => {
     vi.useFakeTimers();
     try {

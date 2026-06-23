@@ -183,7 +183,7 @@ export async function waitForTerminalGatewayDedupe(params: {
   if (initial) {
     return initial;
   }
-  if (params.timeoutMs <= 0 || params.signal?.aborted) {
+  if (params.signal?.aborted) {
     return null;
   }
 
@@ -221,8 +221,10 @@ export async function waitForTerminalGatewayDedupe(params: {
       return;
     }
 
-    timeoutHandle = setSafeTimeout(() => finish(null), params.timeoutMs);
-    timeoutHandle.unref?.();
+    if (params.timeoutMs > 0) {
+      timeoutHandle = setSafeTimeout(() => finish(null), params.timeoutMs);
+      timeoutHandle.unref?.();
+    }
 
     onAbort = () => finish(null);
     params.signal?.addEventListener("abort", onAbort, { once: true });

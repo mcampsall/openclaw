@@ -233,7 +233,7 @@ export async function waitForAgentJob(params: {
   if (cached) {
     return cached;
   }
-  if (timeoutMs <= 0 || signal?.aborted) {
+  if (signal?.aborted) {
     return null;
   }
 
@@ -241,6 +241,7 @@ export async function waitForAgentJob(params: {
     let settled = false;
     let pendingErrorTimer: NodeJS.Timeout | undefined;
     let pendingTimeoutTimer: NodeJS.Timeout | undefined;
+    let timer: NodeJS.Timeout | undefined;
     let onAbort: (() => void) | undefined;
     let removeWaiter = () => {};
 
@@ -265,7 +266,9 @@ export async function waitForAgentJob(params: {
         return;
       }
       settled = true;
-      clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+      }
       clearPendingErrorTimer();
       clearPendingTimeoutTimer();
       unsubscribe();
@@ -364,7 +367,8 @@ export async function waitForAgentJob(params: {
     });
     removeWaiter = addAgentRunWaiter(runId);
 
-    const timer = setSafeTimeout(() => finish(null), timeoutMs);
+    timer = timeoutMs > 0 ? setSafeTimeout(() => finish(null), timeoutMs) : undefined;
+    timer?.unref?.();
     onAbort = () => finish(null);
     signal?.addEventListener("abort", onAbort, { once: true });
   });
