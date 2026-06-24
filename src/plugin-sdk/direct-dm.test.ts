@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import {
   createDirectDmPreCryptoGuardPolicy,
@@ -45,6 +48,11 @@ function createDirectDmRuntime() {
 }
 
 describe("plugin-sdk/direct-dm", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
   it("resolves inbound DM access and command auth through one helper", async () => {
     const result = await resolveInboundDirectDmAccessWithRuntime({
       cfg: baseCfg,
@@ -224,6 +232,177 @@ describe("plugin-sdk/direct-dm", () => {
     expect(result.ctxPayload.SenderId).toBe("sender-1");
     expect(result.ctxPayload.MessageSid).toBe("event-123");
     expect(result.ctxPayload.CommandAuthorized).toBe(true);
+    expect(recordInboundSession).toHaveBeenCalledTimes(1);
+    expect(dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
+    expect(deliver).toHaveBeenCalledWith({ text: "reply text" });
+  });
+
+  it("canonicalizes Michael Discord DMs onto the Loom app session and imports both sides", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "openclaw-canonical-suriel-"));
+    const loomConfigPath = join(tmp, "config.json");
+    await writeFile(
+      loomConfigPath,
+      JSON.stringify({
+        host: "127.0.0.1",
+        port: 8787,
+        injectToken: "loom-token",
+        openclawAgent: "main",
+        openclawSessionId: "her-app",
+      }),
+    );
+    vi.stubEnv("OPENCLAW_SURIEL_CANONICAL_LOOM_CONFIG_PATH", loomConfigPath);
+    const fetchMock = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const recordInboundSession = vi.fn(async () => {});
+    const dispatchReplyWithBufferedBlockDispatcher = vi.fn(async ({ dispatcherOptions }) => {
+      await dispatcherOptions.deliver({ text: "tool progress" }, { kind: "tool" });
+      await dispatcherOptions.deliver({ text: "final reply" }, { kind: "final" });
+    });
+    const runtime = {
+      channel: {
+        routing: {
+          resolveAgentRoute: vi.fn(({ accountId }) => ({
+            agentId: "main",
+            accountId,
+            sessionKey: "agent:main:discord:default:direct:1478511895441833984",
+          })),
+        },
+        session: {
+          resolveStorePath: vi.fn(() => "/tmp/direct-dm-session-store"),
+          readSessionUpdatedAt: vi.fn(() => 1234),
+          recordInboundSession,
+        },
+        reply: {
+          resolveEnvelopeFormatOptions: vi.fn(() => ({ mode: "agent" })),
+          formatAgentEnvelope: vi.fn(({ body }) => `env:${body}`),
+          finalizeInboundContext: vi.fn((ctx) => ctx),
+          dispatchReplyWithBufferedBlockDispatcher,
+        },
+      },
+    } as never;
+    const deliver = vi.fn(async () => {});
+
+    const result = await dispatchInboundDirectDmWithRuntime({
+      cfg: {
+        session: {
+          store: { type: "jsonl" },
+          identityLinks: {
+            "1478511895441833984": ["discord:214258906367655936"],
+          },
+        },
+        channels: {
+          discord: {
+            allowFrom: ["214258906367655936"],
+          },
+        },
+      } as never,
+      runtime,
+      channel: "discord",
+      channelLabel: "Discord",
+      accountId: "default",
+      peer: { kind: "direct", id: "1478511895441833984" },
+      senderId: "214258906367655936",
+      senderAddress: "discord:214258906367655936",
+      recipientAddress: "discord:suriel",
+      conversationLabel: "Michael",
+      rawBody: "hello from discord",
+      messageId: "discord-message-1",
+      timestamp: 1_710_000_000_000,
+      commandAuthorized: true,
+      deliver,
+      onRecordError: () => {},
+      onDispatchError: () => {},
+    });
+
+    expect(result.route.sessionKey).toBe("agent:main:explicit:her-app");
+    expect(result.ctxPayload.SessionKey).toBe("agent:main:explicit:her-app");
+    expect(recordInboundSession).toHaveBeenCalledTimes(1);
+    expect(recordInboundSession.mock.calls[0]?.[0]).toMatchObject({
+      sessionKey: "agent:main:explicit:her-app",
+    });
+    expect(deliver).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)));
+    expect(bodies).toEqual([
+      expect.objectContaining({
+        conversationId: "michael:suriel-pa-main",
+        sender: "michael",
+        transport: "discord",
+        externalMessageId: "discord:discord-message-1:inbound",
+        body: "hello from discord",
+      }),
+      expect.objectContaining({
+        conversationId: "michael:suriel-pa-main",
+        sender: "her",
+        transport: "discord",
+        externalMessageId: "discord:discord-message-1:reply:final",
+        body: "final reply",
+      }),
+    ]);
+    expect(bodies.some((body) => body.body === "tool progress")).toBe(false);
+  });
+
+  it("does not block Discord delivery when canonical Loom import is unavailable", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "openclaw-canonical-suriel-fail-"));
+    const loomConfigPath = join(tmp, "config.json");
+    await writeFile(
+      loomConfigPath,
+      JSON.stringify({
+        host: "127.0.0.1",
+        port: 8787,
+        injectToken: "loom-token",
+        openclawAgent: "main",
+        openclawSessionId: "her-app",
+      }),
+    );
+    vi.stubEnv("OPENCLAW_SURIEL_CANONICAL_LOOM_CONFIG_PATH", loomConfigPath);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("loom offline");
+      }),
+    );
+
+    const { recordInboundSession, dispatchReplyWithBufferedBlockDispatcher, runtime } =
+      createDirectDmRuntime();
+    runtime.channel.routing.resolveAgentRoute = vi.fn(({ accountId }) => ({
+      agentId: "main",
+      accountId,
+      sessionKey: "agent:main:discord:default:direct:1478511895441833984",
+    })) as never;
+    const deliver = vi.fn(async () => {});
+
+    await expect(
+      dispatchInboundDirectDmWithRuntime({
+        cfg: {
+          session: { store: { type: "jsonl" } },
+          channels: {
+            discord: {
+              allowFrom: ["214258906367655936"],
+            },
+          },
+        } as never,
+        runtime,
+        channel: "discord",
+        channelLabel: "Discord",
+        accountId: "default",
+        peer: { kind: "direct", id: "1478511895441833984" },
+        senderId: "214258906367655936",
+        senderAddress: "discord:214258906367655936",
+        recipientAddress: "discord:suriel",
+        conversationLabel: "Michael",
+        rawBody: "hello while app is down",
+        messageId: "discord-message-2",
+        commandAuthorized: true,
+        deliver,
+        onRecordError: () => {},
+        onDispatchError: () => {},
+      }),
+    ).resolves.toMatchObject({
+      route: { sessionKey: "agent:main:explicit:her-app" },
+    });
+
     expect(recordInboundSession).toHaveBeenCalledTimes(1);
     expect(dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
     expect(deliver).toHaveBeenCalledWith({ text: "reply text" });

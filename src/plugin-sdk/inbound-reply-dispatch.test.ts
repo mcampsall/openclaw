@@ -96,13 +96,16 @@ describe("recordInboundSessionAndDispatchReply", () => {
     expect(recordParams?.sessionKey).toBe("agent:main:test:peer");
     expect(recordParams?.ctx).toBe(ctxPayload);
     expect(dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
-    expect(deliver).toHaveBeenCalledWith({
-      text: "hello",
-      mediaUrls: ["https://example.com/a.png"],
-      mediaUrl: undefined,
-      sensitiveMedia: undefined,
-      replyToId: undefined,
-    });
+    expect(deliver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "hello",
+        mediaUrls: ["https://example.com/a.png"],
+        mediaUrl: undefined,
+        sensitiveMedia: undefined,
+        replyToId: undefined,
+      }),
+      { kind: "final" },
+    );
   });
 
   it("keeps public compatibility delivery channel-owned when durable is omitted", async () => {
@@ -141,13 +144,16 @@ describe("recordInboundSessionAndDispatchReply", () => {
       onDispatchError: vi.fn(),
     });
 
-    expect(deliver).toHaveBeenCalledWith({
-      text: "hello",
-      mediaUrl: undefined,
-      mediaUrls: undefined,
-      sensitiveMedia: undefined,
-      replyToId: undefined,
-    });
+    expect(deliver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "hello",
+        mediaUrl: undefined,
+        mediaUrls: undefined,
+        sensitiveMedia: undefined,
+        replyToId: undefined,
+      }),
+      { kind: "final" },
+    );
   });
 
   it("forwards durable delivery options through the SDK convenience wrapper", async () => {

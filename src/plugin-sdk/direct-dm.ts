@@ -1,7 +1,13 @@
 import type { DispatchReplyWithBufferedBlockDispatcher } from "../auto-reply/reply/provider-dispatcher.types.js";
 import type { FinalizedMsgContext } from "../auto-reply/templating.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { resolveInboundRouteEnvelopeBuilderWithRuntime } from "./inbound-envelope.js";
+import {
+  canonicalSurielExternalMessageId,
+  canonicalSurielSentAtFromTimestamp,
+  queueCanonicalSurielThreadImport,
+  resolveCanonicalSurielThreadBridge,
+} from "./canonical-suriel-thread.js";
+import { createInboundEnvelopeBuilder } from "./inbound-envelope.js";
 import { recordInboundSessionAndDispatchReply } from "./inbound-reply-dispatch.js";
 import type { OutboundReplyPayload } from "./reply-payload.js";
 export {
@@ -88,13 +94,33 @@ export async function dispatchInboundDirectDmWithRuntime(params: {
   storePath: string;
   ctxPayload: FinalizedMsgContext;
 }> {
-  const { route, buildEnvelope } = resolveInboundRouteEnvelopeBuilderWithRuntime({
+  const route = params.runtime.channel.routing.resolveAgentRoute({
     cfg: params.cfg,
     channel: params.channel,
     accountId: params.accountId,
     peer: params.peer,
-    runtime: params.runtime.channel,
+  });
+  const accountId = route.accountId ?? params.accountId;
+  const canonicalBridge = resolveCanonicalSurielThreadBridge({
+    cfg: params.cfg,
+    agentId: route.agentId,
+    channel: params.channel,
+    accountId,
+    chatType: "direct",
+    senderId: params.senderId,
+    peerId: params.peer.id,
+  });
+  const dispatchRoute = canonicalBridge
+    ? { ...route, sessionKey: canonicalBridge.sessionKey }
+    : route;
+  const buildEnvelope = createInboundEnvelopeBuilder({
+    cfg: params.cfg,
+    route: dispatchRoute,
     sessionStore: params.cfg.session?.store,
+    resolveStorePath: params.runtime.channel.session.resolveStorePath,
+    readSessionUpdatedAt: params.runtime.channel.session.readSessionUpdatedAt,
+    resolveEnvelopeFormatOptions: params.runtime.channel.reply.resolveEnvelopeFormatOptions,
+    formatAgentEnvelope: params.runtime.channel.reply.formatAgentEnvelope,
   });
 
   const { storePath, body } = buildEnvelope({
@@ -102,6 +128,17 @@ export async function dispatchInboundDirectDmWithRuntime(params: {
     from: params.conversationLabel,
     body: params.rawBody,
     timestamp: params.timestamp,
+  });
+  queueCanonicalSurielThreadImport(canonicalBridge, {
+    sender: "michael",
+    body: params.rawBody,
+    transport: params.channel === "discord" ? "discord" : "system",
+    externalMessageId: canonicalSurielExternalMessageId({
+      channel: params.channel,
+      messageId: params.messageId,
+      side: "inbound",
+    }),
+    sentAt: canonicalSurielSentAtFromTimestamp(params.timestamp),
   });
 
   const ctxPayload = params.runtime.channel.reply.finalizeInboundContext({
@@ -111,8 +148,8 @@ export async function dispatchInboundDirectDmWithRuntime(params: {
     CommandBody: params.commandBody ?? params.rawBody,
     From: params.senderAddress,
     To: params.recipientAddress,
-    SessionKey: route.sessionKey,
-    AccountId: route.accountId ?? params.accountId,
+    SessionKey: dispatchRoute.sessionKey,
+    AccountId: accountId,
     ChatType: "direct",
     ConversationLabel: params.conversationLabel,
     SenderId: params.senderId,
@@ -130,21 +167,37 @@ export async function dispatchInboundDirectDmWithRuntime(params: {
   await recordInboundSessionAndDispatchReply({
     cfg: params.cfg,
     channel: params.channel,
-    accountId: route.accountId ?? params.accountId,
-    agentId: route.agentId,
-    routeSessionKey: route.sessionKey,
+    accountId,
+    agentId: dispatchRoute.agentId,
+    routeSessionKey: dispatchRoute.sessionKey,
     storePath,
     ctxPayload,
     recordInboundSession: params.runtime.channel.session.recordInboundSession,
     dispatchReplyWithBufferedBlockDispatcher:
       params.runtime.channel.reply.dispatchReplyWithBufferedBlockDispatcher,
-    deliver: params.deliver,
+    deliver: async (payload, info) => {
+      await params.deliver(payload);
+      const kind = info?.kind ?? "final";
+      if (kind === "final" && typeof payload.text === "string" && payload.text.trim()) {
+        queueCanonicalSurielThreadImport(canonicalBridge, {
+          sender: "her",
+          body: payload.text,
+          transport: params.channel === "discord" ? "discord" : "system",
+          externalMessageId: canonicalSurielExternalMessageId({
+            channel: params.channel,
+            messageId: params.messageId,
+            side: "reply",
+            suffix: kind,
+          }),
+        });
+      }
+    },
     onRecordError: params.onRecordError,
     onDispatchError: params.onDispatchError,
   });
 
   return {
-    route,
+    route: dispatchRoute,
     storePath,
     ctxPayload,
   };

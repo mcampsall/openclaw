@@ -161,7 +161,10 @@ type RecordChannelMessageReplyDispatchParams = {
   ctxPayload: FinalizedMsgContext;
   recordInboundSession: RecordInboundSessionFn;
   dispatchReplyWithBufferedBlockDispatcher: DispatchReplyWithBufferedBlockDispatcher;
-  deliver: (payload: OutboundReplyPayload) => Promise<void>;
+  deliver: (
+    payload: OutboundReplyPayload,
+    info: { kind: "tool" | "block" | "final" },
+  ) => Promise<void>;
   durable?: false | DurableInboundReplyDeliveryOptions;
   onRecordError: (err: unknown) => void;
   onDispatchError: (err: unknown, info: { kind: string }) => void;
@@ -246,7 +249,7 @@ export async function recordChannelMessageReplyDispatch(
         return;
       }
     }
-    await params.deliver(normalized);
+    await params.deliver(normalized, info);
   };
 
   await runPreparedChannelTurn({
