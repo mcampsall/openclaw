@@ -3,8 +3,12 @@ import type { FinalizedMsgContext } from "../auto-reply/templating.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   canonicalSurielExternalMessageId,
+  canonicalSurielExternalTurnId,
   canonicalSurielSentAtFromTimestamp,
+  queueCanonicalSurielThreadClearThenImport,
   queueCanonicalSurielThreadImport,
+  queueCanonicalSurielThreadStatus,
+  queueCanonicalSurielThreadStatusClear,
   resolveCanonicalSurielThreadBridge,
 } from "./canonical-suriel-thread.js";
 import { createInboundEnvelopeBuilder } from "./inbound-envelope.js";
@@ -113,6 +117,13 @@ export async function dispatchInboundDirectDmWithRuntime(params: {
   const dispatchRoute = canonicalBridge
     ? { ...route, sessionKey: canonicalBridge.sessionKey }
     : route;
+  const transport = params.channel === "discord" ? "discord" : "system";
+  const canonicalTurnId = canonicalBridge
+    ? canonicalSurielExternalTurnId({
+        channel: params.channel,
+        messageId: params.messageId,
+      })
+    : "";
   const buildEnvelope = createInboundEnvelopeBuilder({
     cfg: params.cfg,
     route: dispatchRoute,
@@ -132,12 +143,18 @@ export async function dispatchInboundDirectDmWithRuntime(params: {
   queueCanonicalSurielThreadImport(canonicalBridge, {
     sender: "michael",
     body: params.rawBody,
-    transport: params.channel === "discord" ? "discord" : "system",
+    transport,
     externalMessageId: canonicalSurielExternalMessageId({
       channel: params.channel,
       messageId: params.messageId,
       side: "inbound",
     }),
+    sentAt: canonicalSurielSentAtFromTimestamp(params.timestamp),
+  });
+  queueCanonicalSurielThreadStatus(canonicalBridge, {
+    transport,
+    externalTurnId: canonicalTurnId,
+    phase: "thinking",
     sentAt: canonicalSurielSentAtFromTimestamp(params.timestamp),
   });
 
@@ -164,6 +181,7 @@ export async function dispatchInboundDirectDmWithRuntime(params: {
     ...params.extraContext,
   });
 
+  let finalDelivered = false;
   await recordInboundSessionAndDispatchReply({
     cfg: params.cfg,
     channel: params.channel,
@@ -178,23 +196,59 @@ export async function dispatchInboundDirectDmWithRuntime(params: {
     deliver: async (payload, info) => {
       await params.deliver(payload);
       const kind = info?.kind ?? "final";
+      if (kind === "tool") {
+        queueCanonicalSurielThreadStatus(canonicalBridge, {
+          transport,
+          externalTurnId: canonicalTurnId,
+          phase: "tool",
+        });
+        return;
+      }
+      if (kind === "final") {
+        finalDelivered = true;
+      }
       if (kind === "final" && typeof payload.text === "string" && payload.text.trim()) {
-        queueCanonicalSurielThreadImport(canonicalBridge, {
-          sender: "her",
-          body: payload.text,
-          transport: params.channel === "discord" ? "discord" : "system",
-          externalMessageId: canonicalSurielExternalMessageId({
-            channel: params.channel,
-            messageId: params.messageId,
-            side: "reply",
-            suffix: kind,
-          }),
+        queueCanonicalSurielThreadClearThenImport(
+          canonicalBridge,
+          {
+            transport,
+            externalTurnId: canonicalTurnId,
+          },
+          {
+            sender: "her",
+            body: payload.text,
+            transport,
+            externalMessageId: canonicalSurielExternalMessageId({
+              channel: params.channel,
+              messageId: params.messageId,
+              side: "reply",
+              suffix: kind,
+            }),
+          },
+        );
+      } else if (kind === "final") {
+        queueCanonicalSurielThreadStatusClear(canonicalBridge, {
+          transport,
+          externalTurnId: canonicalTurnId,
         });
       }
     },
     onRecordError: params.onRecordError,
-    onDispatchError: params.onDispatchError,
+    onDispatchError: (err, info) => {
+      queueCanonicalSurielThreadStatus(canonicalBridge, {
+        transport,
+        externalTurnId: canonicalTurnId,
+        phase: "error",
+      });
+      params.onDispatchError(err, info);
+    },
   });
+  if (!finalDelivered) {
+    queueCanonicalSurielThreadStatusClear(canonicalBridge, {
+      transport,
+      externalTurnId: canonicalTurnId,
+    });
+  }
 
   return {
     route: dispatchRoute,

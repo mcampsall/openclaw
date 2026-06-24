@@ -21,6 +21,20 @@ const DEFAULT_LOOM_CONFIG_PATH = path.join(
 );
 
 type CanonicalSurielTransport = "discord" | "voice" | "system";
+type CanonicalSurielTurnStatusPhase =
+  | "queued"
+  | "thinking"
+  | "tool"
+  | "coding"
+  | "web"
+  | "deploy"
+  | "build"
+  | "concierge"
+  | "done"
+  | "error"
+  | "stallSoft"
+  | "stallHard"
+  | "compacting";
 
 type LoomConfig = {
   baseUrl: string;
@@ -37,6 +51,17 @@ export type CanonicalSurielThreadBridge = {
     transport: CanonicalSurielTransport;
     externalMessageId: string;
     sentAt?: string;
+  }) => Promise<void>;
+  updateTurnStatus: (input: {
+    transport: CanonicalSurielTransport;
+    externalTurnId: string;
+    phase: CanonicalSurielTurnStatusPhase;
+    tool?: string;
+    sentAt?: string;
+  }) => Promise<void>;
+  clearTurnStatus: (input: {
+    transport: CanonicalSurielTransport;
+    externalTurnId: string;
   }) => Promise<void>;
 };
 
@@ -247,6 +272,51 @@ export function resolveCanonicalSurielThreadBridge(
         throw new Error(`canonical_suriel_import_failed:${response.status}`);
       }
     },
+    updateTurnStatus: async (input) => {
+      if (!input.externalTurnId.trim()) {
+        return;
+      }
+      const response = await fetch(`${loom.baseUrl}/api/admin/conversation/turn-status`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${loom.injectToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          conversationId: PUBLIC_CONVERSATION_ID,
+          action: "update",
+          transport: input.transport,
+          externalTurnId: input.externalTurnId,
+          phase: input.phase,
+          ...(input.tool?.trim() ? { tool: input.tool.trim() } : {}),
+          ...(input.sentAt ? { sentAt: input.sentAt } : {}),
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`canonical_suriel_turn_status_failed:${response.status}`);
+      }
+    },
+    clearTurnStatus: async (input) => {
+      if (!input.externalTurnId.trim()) {
+        return;
+      }
+      const response = await fetch(`${loom.baseUrl}/api/admin/conversation/turn-status`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${loom.injectToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          conversationId: PUBLIC_CONVERSATION_ID,
+          action: "clear",
+          transport: input.transport,
+          externalTurnId: input.externalTurnId,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`canonical_suriel_turn_status_clear_failed:${response.status}`);
+      }
+    },
   };
 }
 
@@ -268,6 +338,74 @@ export function queueCanonicalSurielThreadImport(
   });
 }
 
+export function queueCanonicalSurielThreadStatus(
+  bridge: CanonicalSurielThreadBridge | null,
+  input: Parameters<CanonicalSurielThreadBridge["updateTurnStatus"]>[0],
+): void {
+  if (!bridge) {
+    return;
+  }
+  void bridge.updateTurnStatus(input).catch((error) => {
+    log.warn("canonical conversation status update failed", {
+      conversationId: PUBLIC_CONVERSATION_ID,
+      transport: input.transport,
+      externalTurnId: input.externalTurnId,
+      phase: input.phase,
+      error: formatErrorMessage(error),
+    });
+  });
+}
+
+export function queueCanonicalSurielThreadStatusClear(
+  bridge: CanonicalSurielThreadBridge | null,
+  input: Parameters<CanonicalSurielThreadBridge["clearTurnStatus"]>[0],
+): void {
+  if (!bridge) {
+    return;
+  }
+  void bridge.clearTurnStatus(input).catch((error) => {
+    log.warn("canonical conversation status clear failed", {
+      conversationId: PUBLIC_CONVERSATION_ID,
+      transport: input.transport,
+      externalTurnId: input.externalTurnId,
+      error: formatErrorMessage(error),
+    });
+  });
+}
+
+export function queueCanonicalSurielThreadClearThenImport(
+  bridge: CanonicalSurielThreadBridge | null,
+  clearInput: Parameters<CanonicalSurielThreadBridge["clearTurnStatus"]>[0],
+  importInput: Parameters<CanonicalSurielThreadBridge["importMessage"]>[0],
+): void {
+  if (!bridge) {
+    return;
+  }
+  void (async () => {
+    try {
+      await bridge.clearTurnStatus(clearInput);
+    } catch (error) {
+      log.warn("canonical conversation status clear failed", {
+        conversationId: PUBLIC_CONVERSATION_ID,
+        transport: clearInput.transport,
+        externalTurnId: clearInput.externalTurnId,
+        error: formatErrorMessage(error),
+      });
+    }
+    try {
+      await bridge.importMessage(importInput);
+    } catch (error) {
+      log.warn("canonical conversation import failed", {
+        conversationId: PUBLIC_CONVERSATION_ID,
+        sender: importInput.sender,
+        transport: importInput.transport,
+        externalMessageId: importInput.externalMessageId,
+        error: formatErrorMessage(error),
+      });
+    }
+  })();
+}
+
 export function canonicalSurielExternalMessageId(params: {
   channel: string;
   messageId: string;
@@ -283,6 +421,16 @@ export function canonicalSurielExternalMessageId(params: {
     .filter(Boolean)
     .join(":")
     .slice(0, 200);
+}
+
+export function canonicalSurielExternalTurnId(params: {
+  channel: string;
+  messageId: string;
+}): string {
+  return [normalizeLowercaseStringOrEmpty(params.channel) || "unknown", params.messageId.trim()]
+    .filter(Boolean)
+    .join(":")
+    .slice(0, 180);
 }
 
 export { toIsoSentAt as canonicalSurielSentAtFromTimestamp };

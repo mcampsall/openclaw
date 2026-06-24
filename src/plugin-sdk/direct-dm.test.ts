@@ -251,7 +251,7 @@ describe("plugin-sdk/direct-dm", () => {
       }),
     );
     vi.stubEnv("OPENCLAW_SURIEL_CANONICAL_LOOM_CONFIG_PATH", loomConfigPath);
-    const fetchMock = vi.fn(async () => ({ ok: true }));
+    const fetchMock = vi.fn(async (_url: string, _init?: { body?: unknown }) => ({ ok: true }));
     vi.stubGlobal("fetch", fetchMock);
 
     const recordInboundSession = vi.fn(async () => {});
@@ -318,12 +318,25 @@ describe("plugin-sdk/direct-dm", () => {
     expect(result.route.sessionKey).toBe("agent:main:explicit:her-app");
     expect(result.ctxPayload.SessionKey).toBe("agent:main:explicit:her-app");
     expect(recordInboundSession).toHaveBeenCalledTimes(1);
-    expect(recordInboundSession.mock.calls[0]?.[0]).toMatchObject({
+    const recordCalls = recordInboundSession.mock.calls as unknown[][];
+    expect(recordCalls[0]?.[0]).toMatchObject({
       sessionKey: "agent:main:explicit:her-app",
     });
     expect(deliver).toHaveBeenCalledTimes(2);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    const fetchCalls = fetchMock.mock.calls as Array<[string, { body?: unknown }]>;
+    const calls = fetchCalls.map((call) => ({
+      path: new URL(String(call[0])).pathname,
+      body: JSON.parse(String(call[1]?.body)) as Record<string, unknown>,
+    }));
+    const bodies = calls.map((call) => call.body);
+    expect(calls.map((call) => call.path)).toEqual([
+      "/api/admin/conversation/import",
+      "/api/admin/conversation/turn-status",
+      "/api/admin/conversation/turn-status",
+      "/api/admin/conversation/turn-status",
+      "/api/admin/conversation/import",
+    ]);
     expect(bodies).toEqual([
       expect.objectContaining({
         conversationId: "michael:suriel-pa-main",
@@ -331,6 +344,26 @@ describe("plugin-sdk/direct-dm", () => {
         transport: "discord",
         externalMessageId: "discord:discord-message-1:inbound",
         body: "hello from discord",
+      }),
+      expect.objectContaining({
+        conversationId: "michael:suriel-pa-main",
+        action: "update",
+        transport: "discord",
+        externalTurnId: "discord:discord-message-1",
+        phase: "thinking",
+      }),
+      expect.objectContaining({
+        conversationId: "michael:suriel-pa-main",
+        action: "update",
+        transport: "discord",
+        externalTurnId: "discord:discord-message-1",
+        phase: "tool",
+      }),
+      expect.objectContaining({
+        conversationId: "michael:suriel-pa-main",
+        action: "clear",
+        transport: "discord",
+        externalTurnId: "discord:discord-message-1",
       }),
       expect.objectContaining({
         conversationId: "michael:suriel-pa-main",
@@ -359,18 +392,21 @@ describe("plugin-sdk/direct-dm", () => {
     vi.stubEnv("OPENCLAW_SURIEL_CANONICAL_LOOM_CONFIG_PATH", loomConfigPath);
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => {
+      vi.fn(async (_url: string, _init?: { body?: unknown }) => {
         throw new Error("loom offline");
       }),
     );
 
     const { recordInboundSession, dispatchReplyWithBufferedBlockDispatcher, runtime } =
       createDirectDmRuntime();
-    runtime.channel.routing.resolveAgentRoute = vi.fn(({ accountId }) => ({
+    const mutableRuntime = runtime as unknown as {
+      channel: { routing: { resolveAgentRoute: ReturnType<typeof vi.fn> } };
+    };
+    mutableRuntime.channel.routing.resolveAgentRoute = vi.fn(({ accountId }) => ({
       agentId: "main",
       accountId,
       sessionKey: "agent:main:discord:default:direct:1478511895441833984",
-    })) as never;
+    }));
     const deliver = vi.fn(async () => {});
 
     await expect(
