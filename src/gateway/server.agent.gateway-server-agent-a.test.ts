@@ -234,6 +234,22 @@ describe("gateway server agent", () => {
     expect(call.sourceReplyDeliveryMode).toBe("message_tool_only");
   });
 
+  test("agent forwards transcriptMessage separately from runtime-context prompt", async () => {
+    const res = await rpcReq(ws, "agent", {
+      message:
+        "<suriel-app-context>{\"state\":\"runtime only\"}</suriel-app-context>\n\n" +
+        "<suriel-turn-input>\nhello\n</suriel-turn-input>",
+      transcriptMessage: "hello",
+      sessionKey: "main",
+      idempotencyKey: "idem-agent-transcript-message",
+    });
+    expect(res.ok).toBe(true);
+
+    const call = await waitForAgentCommandCall("idem-agent-transcript-message");
+    expect(call.message).toContain("<suriel-app-context>");
+    expect(call.transcriptMessage).toBe("hello");
+  });
+
   test("agent preserves spawnDepth on subagent sessions", async () => {
     await setTestSessionStore({
       entries: {

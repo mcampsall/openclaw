@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import {
   mergeSessionEntry,
   setSessionRuntimeModel,
@@ -43,6 +45,98 @@ function removeLifecycleStateFromMetadataPatch(entry: SessionEntry): SessionEntr
   delete next.endedAt;
   delete next.runtimeMs;
   return next;
+}
+
+async function readSessionHeader(
+  sessionFile: string,
+): Promise<{ sessionId?: string; parentSession: string } | undefined> {
+  let handle: fs.FileHandle | undefined;
+  try {
+    handle = await fs.open(sessionFile, "r");
+    const buffer = Buffer.alloc(8192);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead <= 0) {
+      return undefined;
+    }
+    const firstLine = buffer.subarray(0, bytesRead).toString("utf8").split("\n", 1)[0]?.trim();
+    if (!firstLine) {
+      return undefined;
+    }
+    const parsed = JSON.parse(firstLine) as {
+      type?: unknown;
+      id?: unknown;
+      parentSession?: unknown;
+    };
+    if (parsed.type !== "session" || typeof parsed.parentSession !== "string") {
+      return undefined;
+    }
+    return {
+      parentSession: parsed.parentSession,
+      ...(typeof parsed.id === "string" && parsed.id.trim()
+        ? { sessionId: parsed.id.trim() }
+        : {}),
+    };
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+async function resolveLatestSuccessorRotationIfNeeded(params: {
+  cfg: OpenClawConfig;
+  sessionEntry?: SessionEntry;
+}): Promise<{ sessionId?: string; sessionFile: string } | undefined> {
+  if (params.cfg.agents?.defaults?.compaction?.truncateAfterCompaction !== true) {
+    return undefined;
+  }
+  const currentSessionFile = params.sessionEntry?.sessionFile?.trim();
+  if (!currentSessionFile) {
+    return undefined;
+  }
+
+  const currentResolved = path.resolve(currentSessionFile);
+  const dir = path.dirname(currentResolved);
+  let entries: Array<{ name: string; isFile: () => boolean }>;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return undefined;
+  }
+
+  let latest:
+    | {
+        sessionFile: string;
+        sessionId?: string;
+        mtimeMs: number;
+      }
+    | undefined;
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
+      continue;
+    }
+    const candidate = path.join(dir, entry.name);
+    if (path.resolve(candidate) === currentResolved) {
+      continue;
+    }
+    const header = await readSessionHeader(candidate);
+    if (!header || path.resolve(header.parentSession) !== currentResolved) {
+      continue;
+    }
+    const stat = await fs.stat(candidate).catch(() => undefined);
+    if (!stat) {
+      continue;
+    }
+    if (!latest || stat.mtimeMs > latest.mtimeMs) {
+      latest = {
+        sessionFile: candidate,
+        sessionId: header.sessionId,
+        mtimeMs: stat.mtimeMs,
+      };
+    }
+  }
+
+  return latest ? { sessionId: latest.sessionId, sessionFile: latest.sessionFile } : undefined;
 }
 
 export async function updateSessionStoreAfterAgentRun(params: {
@@ -231,6 +325,16 @@ export async function updateSessionStoreAfterAgentRun(params: {
   }
   if (compactionsThisRun > 0) {
     next.compactionCount = (entry.compactionCount ?? 0) + compactionsThisRun;
+    const successorRotation = await resolveLatestSuccessorRotationIfNeeded({
+      cfg,
+      sessionEntry: entry,
+    });
+    if (successorRotation) {
+      if (successorRotation.sessionId) {
+        next.sessionId = successorRotation.sessionId;
+      }
+      next.sessionFile = successorRotation.sessionFile;
+    }
   }
   const metadataPatch = removeLifecycleStateFromMetadataPatch(next);
   const persisted = await updateSessionStore(storePath, (store) => {
@@ -267,6 +371,8 @@ export async function clearCliSessionInStore(params: {
 }
 
 export async function recordCliCompactionInStore(params: {
+  compactionTokensAfter?: number;
+  cfg?: OpenClawConfig;
   provider: string;
   sessionKey: string;
   sessionStore: Record<string, SessionEntry>;
@@ -282,6 +388,29 @@ export async function recordCliCompactionInStore(params: {
   clearCliSession(next, provider);
   next.compactionCount = (entry.compactionCount ?? 0) + 1;
   next.updatedAt = Date.now();
+  const compactionTokensAfter = resolvePositiveInteger(params.compactionTokensAfter);
+  if (compactionTokensAfter !== undefined) {
+    next.totalTokens = compactionTokensAfter;
+    next.totalTokensFresh = true;
+    next.inputTokens = undefined;
+    next.outputTokens = undefined;
+    next.cacheRead = undefined;
+    next.cacheWrite = undefined;
+  } else {
+    next.totalTokensFresh = false;
+  }
+  if (params.cfg) {
+    const successorRotation = await resolveLatestSuccessorRotationIfNeeded({
+      cfg: params.cfg,
+      sessionEntry: entry,
+    });
+    if (successorRotation) {
+      if (successorRotation.sessionId) {
+        next.sessionId = successorRotation.sessionId;
+      }
+      next.sessionFile = successorRotation.sessionFile;
+    }
+  }
 
   const persisted = await updateSessionStore(storePath, (store) => {
     const merged = mergeSessionEntry(store[sessionKey], next);

@@ -326,7 +326,9 @@ export function resolveSession(opts: {
       }).fresh
     : false;
   const sessionId =
-    opts.sessionId?.trim() || (fresh ? sessionEntry?.sessionId : undefined) || crypto.randomUUID();
+    (fresh ? sessionEntry?.sessionId?.trim() : undefined) ||
+    opts.sessionId?.trim() ||
+    crypto.randomUUID();
   const isNewSession = !fresh && !opts.sessionId;
 
   clearBootstrapSnapshotOnSessionRollover({

@@ -619,6 +619,7 @@ export const agentHandlers: GatewayRequestHandlers = {
     }
     const request = p as {
       message: string;
+      transcriptMessage?: string;
       agentId?: string;
       provider?: string;
       model?: string;
@@ -1563,6 +1564,9 @@ export const agentHandlers: GatewayRequestHandlers = {
           dispatchAgentRunFromGateway({
             ingressOpts: {
               message,
+              ...(typeof request.transcriptMessage === "string"
+                ? { transcriptMessage: request.transcriptMessage }
+                : {}),
               images,
               imageOrder,
               agentId: ingressAgentId,

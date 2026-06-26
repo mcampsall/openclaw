@@ -557,6 +557,60 @@ describe("incrementCompactionCount", () => {
     expect(stored[sessionKey].totalTokensFresh).toBe(true);
   });
 
+  it("adopts the latest rotated successor transcript when run accounting only reports compaction", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-compact-successor-"));
+    tempDirs.push(tmp);
+    const sessionFile = path.join(tmp, "her-app.jsonl");
+    const successorFile = path.join(tmp, "2026-06-26T01-51-57-016Z_rotated-session.jsonl");
+    await fs.writeFile(
+      sessionFile,
+      `${JSON.stringify({ type: "session", id: "her-app", version: 3 })}\n`,
+      "utf-8",
+    );
+    await fs.writeFile(
+      successorFile,
+      `${JSON.stringify({
+        type: "session",
+        id: "rotated-session",
+        version: 3,
+        parentSession: sessionFile,
+      })}\n`,
+      "utf-8",
+    );
+    const entry = {
+      sessionId: "her-app",
+      sessionFile,
+      updatedAt: Date.now(),
+      compactionCount: 106,
+      totalTokens: 96_000,
+    } as SessionEntry;
+    const { storePath, sessionKey, sessionStore } = await createCompactionSessionFixture(entry);
+
+    await incrementRunCompactionCount({
+      cfg: {
+        agents: {
+          defaults: {
+            compaction: {
+              truncateAfterCompaction: true,
+            },
+          },
+        },
+      },
+      sessionEntry: entry,
+      sessionStore,
+      sessionKey,
+      storePath,
+      amount: 1,
+      compactionTokensAfter: 4_734,
+    });
+
+    const stored = JSON.parse(await fs.readFile(storePath, "utf-8"));
+    expect(stored[sessionKey].sessionId).toBe("rotated-session");
+    expect(stored[sessionKey].sessionFile).toBe(successorFile);
+    expect(stored[sessionKey].compactionCount).toBe(107);
+    expect(stored[sessionKey].totalTokens).toBe(4_734);
+  });
+
   it("falls back to last-call usage when run compactionTokensAfter is non-finite", async () => {
     const entry = {
       sessionId: "s1",

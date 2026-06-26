@@ -155,6 +155,8 @@ export const PollParamsSchema = Type.Object(
 export const AgentParamsSchema = Type.Object(
   {
     message: NonEmptyString,
+    /** User-visible transcript body; excludes runtime-only context carried in message. */
+    transcriptMessage: Type.Optional(Type.String()),
     agentId: Type.Optional(NonEmptyString),
     provider: Type.Optional(Type.String()),
     model: Type.Optional(Type.String()),

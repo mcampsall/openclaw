@@ -72,6 +72,17 @@ describe("AgentParamsSchema", () => {
     }
   });
 
+  it("accepts transcriptMessage for runtime-context turns", () => {
+    expect(
+      Value.Check(AgentParamsSchema, {
+        message: "<runtime-context>app state</runtime-context>\n\n<suriel-turn-input>\nhi\n</suriel-turn-input>",
+        transcriptMessage: "hi",
+        sessionKey: "agent:main:explicit:her-app",
+        idempotencyKey: "turn-runtime-context-1",
+      }),
+    ).toBe(true);
+  });
+
   it("rejects unknown chatType values and stays optional", () => {
     expect(
       Value.Check(AgentParamsSchema, {

@@ -170,6 +170,8 @@ describe("runCliTurnCompactionLifecycle", () => {
     expect(maintenanceCall?.sessionKey).toBe(sessionKey);
     expect(maintenanceCall?.sessionFile).toBe(sessionFile);
     expect(updatedEntry?.compactionCount).toBe(1);
+    expect(updatedEntry?.totalTokens).toBe(100);
+    expect(updatedEntry?.totalTokensFresh).toBe(true);
     expect(updatedEntry?.cliSessionBindings?.["claude-cli"]).toBeUndefined();
     expect(updatedEntry?.cliSessionIds?.["claude-cli"]).toBeUndefined();
     expect(updatedEntry?.claudeCliSessionId).toBeUndefined();

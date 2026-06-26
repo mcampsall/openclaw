@@ -3,6 +3,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { AgentCompactionMode } from "../../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { CompactResult } from "../../context-engine/types.js";
 import { ensureContextEnginesInitialized as ensureContextEnginesInitializedImpl } from "../../context-engine/init.js";
 import { resolveContextEngine as resolveContextEngineImpl } from "../../context-engine/registry.js";
 import type { ContextEngine } from "../../context-engine/types.js";
@@ -126,7 +127,7 @@ async function compactCliTranscript(params: {
   senderIsOwner?: boolean;
   thinkLevel?: Parameters<typeof buildEmbeddedCompactionRuntimeContext>[0]["thinkLevel"];
   extraSystemPrompt?: string;
-}) {
+}): Promise<CompactResult["result"] | false> {
   const runtimeContext = {
     ...buildEmbeddedCompactionRuntimeContext({
       sessionKey: params.sessionKey,
@@ -177,7 +178,7 @@ async function compactCliTranscript(params: {
     runtimeContext,
     config: params.cfg,
   });
-  return true;
+  return compactResult.result ?? {};
 }
 
 export async function runCliTurnCompactionLifecycle(params: {
@@ -243,7 +244,7 @@ export async function runCliTurnCompactionLifecycle(params: {
     return params.sessionEntry;
   }
 
-  const compacted = await compactCliTranscript({
+  const compactionResult = await compactCliTranscript({
     contextEngine,
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
@@ -264,12 +265,14 @@ export async function runCliTurnCompactionLifecycle(params: {
     extraSystemPrompt: params.extraSystemPrompt,
   });
 
-  if (!compacted || !params.sessionStore || !params.storePath) {
+  if (!compactionResult || !params.sessionStore || !params.storePath) {
     return params.sessionEntry;
   }
 
   return (
     (await cliCompactionDeps.recordCliCompactionInStore({
+      cfg: params.cfg,
+      compactionTokensAfter: compactionResult.tokensAfter,
       provider: params.provider,
       sessionKey: params.sessionKey,
       sessionStore: params.sessionStore,

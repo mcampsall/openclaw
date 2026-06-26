@@ -1457,32 +1457,43 @@ async function agentCommandInternal(
           config: cfg,
           embeddedAssistantGapFill,
         });
-        sessionEntry = await (
-          await loadCliCompactionRuntime()
-        ).runCliTurnCompactionLifecycle({
-          cfg,
-          sessionId,
-          sessionKey: sessionKey ?? sessionId,
-          sessionEntry,
-          sessionStore,
-          storePath,
-          sessionAgentId,
-          workspaceDir,
-          agentDir,
-          provider: result.meta.agentMeta?.provider ?? provider,
-          model: result.meta.agentMeta?.model ?? model,
-          skillsSnapshot,
-          messageChannel,
-          agentAccountId: runContext.accountId,
-          senderIsOwner: opts.senderIsOwner,
-          thinkLevel: resolvedThinkLevel,
-          extraSystemPrompt: opts.extraSystemPrompt,
-        });
       } catch (error) {
         log.warn(
           `Turn transcript persistence failed for ${sessionKey ?? sessionId}: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
+      const compactionSessionEntry = sessionEntry;
+      const compactionProvider = result.meta.agentMeta?.provider ?? provider;
+      const compactionModel = result.meta.agentMeta?.model ?? model;
+      void (async () => {
+        try {
+          await (
+            await loadCliCompactionRuntime()
+          ).runCliTurnCompactionLifecycle({
+            cfg,
+            sessionId,
+            sessionKey: sessionKey ?? sessionId,
+            sessionEntry: compactionSessionEntry,
+            sessionStore,
+            storePath,
+            sessionAgentId,
+            workspaceDir,
+            agentDir,
+            provider: compactionProvider,
+            model: compactionModel,
+            skillsSnapshot,
+            messageChannel,
+            agentAccountId: runContext.accountId,
+            senderIsOwner: opts.senderIsOwner,
+            thinkLevel: resolvedThinkLevel,
+            extraSystemPrompt: opts.extraSystemPrompt,
+          });
+        } catch (error) {
+          log.warn(
+            `Turn transcript compaction failed for ${sessionKey ?? sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      })();
     }
 
     const payloads = result.payloads ?? [];

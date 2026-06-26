@@ -36,6 +36,7 @@ type ClaudeLiveSession = {
   managedRun: ManagedRun;
   providerId: string;
   modelId: string;
+  sessionId?: string;
   noOutputTimeoutMs: number;
   stderr: string;
   stdoutBuffer: string;
@@ -317,13 +318,16 @@ function finishTurn(session: ClaudeLiveSession, output: CliOutput): void {
   if (!turn) {
     return;
   }
+  session.sessionId = output.sessionId ?? turn.sessionId ?? session.sessionId;
+  const outputWithSession =
+    !output.sessionId && session.sessionId ? { ...output, sessionId: session.sessionId } : output;
   cliBackendLog.info(
     `claude live session turn: provider=${session.providerId} model=${session.modelId} durationMs=${Date.now() - turn.startedAtMs} rawLines=${turn.rawLines.length}`,
   );
   clearTurnTimers(turn);
   turn.streamingParser.finish();
   session.currentTurn = null;
-  turn.resolve(output);
+  turn.resolve(outputWithSession);
   scheduleIdleClose(session);
 }
 
@@ -542,6 +546,10 @@ function handleClaudeLiveLine(session: ClaudeLiveSession, line: string): void {
     }
     return;
   }
+  const parsedSessionId = parseSessionId(parsed);
+  if (parsedSessionId) {
+    session.sessionId = parsedSessionId;
+  }
   if (!turn) {
     return;
   }
@@ -559,7 +567,7 @@ function handleClaudeLiveLine(session: ClaudeLiveSession, line: string): void {
   }
   turn.rawLines.push(trimmed);
   turn.streamingParser.push(`${trimmed}\n`);
-  turn.sessionId = parseSessionId(parsed) ?? turn.sessionId;
+  turn.sessionId = parsedSessionId ?? turn.sessionId ?? session.sessionId;
   if (parsed.type !== "result") {
     return;
   }
@@ -691,6 +699,8 @@ async function createClaudeLiveSession(params: {
   cleanup: () => Promise<void>;
 }): Promise<ClaudeLiveSession> {
   let session: ClaudeLiveSession | null = null;
+  const pendingStdout: string[] = [];
+  let pendingStderr = "";
   const managedRun = await params.supervisor.spawn({
     sessionId: params.context.params.sessionId,
     backendId: params.context.backendResolved.id,
@@ -705,6 +715,8 @@ async function createClaudeLiveSession(params: {
     onStdout: (chunk) => {
       if (session) {
         handleClaudeStdout(session, chunk);
+      } else {
+        pendingStdout.push(chunk);
       }
     },
     onStderr: (chunk) => {
@@ -719,6 +731,8 @@ async function createClaudeLiveSession(params: {
           return;
         }
         resetNoOutputTimer(session);
+      } else {
+        pendingStderr += chunk;
       }
     },
   });
@@ -729,7 +743,7 @@ async function createClaudeLiveSession(params: {
     providerId: params.context.params.provider,
     modelId: params.context.modelId,
     noOutputTimeoutMs: params.noOutputTimeoutMs,
-    stderr: "",
+    stderr: pendingStderr.slice(-CLAUDE_LIVE_MAX_STDERR_CHARS),
     stdoutBuffer: "",
     currentTurn: null,
     drainTimer: null,
@@ -739,6 +753,9 @@ async function createClaudeLiveSession(params: {
     cleanupDone: false,
     closing: false,
   };
+  for (const chunk of pendingStdout) {
+    handleClaudeStdout(session, chunk);
+  }
   void managedRun.wait().then(
     (exit) => handleClaudeExit(session, exit.exitCode),
     (error) => {
@@ -768,6 +785,7 @@ function createTurn(params: {
     startedAtMs: Date.now(),
     rawLines: [],
     rawChars: 0,
+    sessionId: params.session.sessionId,
     noOutputTimer: null,
     timeoutTimer: null,
     streamingParser: createCliJsonlStreamingParser({

@@ -6,7 +6,11 @@ import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { loadSessionStore } from "../../config/sessions.js";
 import type { EmbeddedPiRunResult } from "../pi-embedded.js";
-import { clearCliSessionInStore, updateSessionStoreAfterAgentRun } from "./session-store.js";
+import {
+  clearCliSessionInStore,
+  recordCliCompactionInStore,
+  updateSessionStoreAfterAgentRun,
+} from "./session-store.js";
 import { resolveSession } from "./session.js";
 
 vi.mock("../model-selection.js", () => ({
@@ -573,6 +577,170 @@ describe("updateSessionStoreAfterAgentRun", () => {
         sessionId: "claude-cli-session-1",
         authEpoch: "auth-epoch-1",
       });
+    });
+  });
+
+  it("uses a fresh stored active session id for explicit route labels", async () => {
+    await withTempSessionStore(async ({ storePath, dir }) => {
+      const cfg = {
+        session: {
+          store: storePath,
+          mainKey: "main",
+        },
+      } as never;
+      const sessionKey = "agent:main:explicit:her-app";
+      const rotatedSessionFile = path.join(dir, "rotated-session.jsonl");
+      const sessionStore: Record<string, SessionEntry> = {
+        [sessionKey]: {
+          sessionId: "rotated-session",
+          sessionFile: rotatedSessionFile,
+          updatedAt: Date.now(),
+          sessionStartedAt: Date.now(),
+        },
+      };
+      await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2));
+
+      const resolved = resolveSession({
+        cfg,
+        sessionId: "her-app",
+      });
+
+      expect(resolved.sessionKey).toBe(sessionKey);
+      expect(resolved.sessionId).toBe("rotated-session");
+      expect(resolved.sessionEntry?.sessionFile).toBe(rotatedSessionFile);
+    });
+  });
+
+  it("adopts the compacted successor transcript after a direct agent run", async () => {
+    await withTempSessionStore(async ({ storePath, dir }) => {
+      const cfg = {
+        agents: {
+          defaults: {
+            compaction: {
+              truncateAfterCompaction: true,
+            },
+          },
+        },
+      } as never;
+      const sessionKey = "agent:main:explicit:her-app";
+      const activeSessionFile = path.join(dir, "her-app.jsonl");
+      const successorSessionFile = path.join(dir, "2026-06-26T00-00-00-000Z_successor.jsonl");
+      await fs.writeFile(
+        activeSessionFile,
+        `${JSON.stringify({ type: "session", version: 1, id: "her-app" })}\n`,
+      );
+      await fs.writeFile(
+        successorSessionFile,
+        `${JSON.stringify({
+          type: "session",
+          version: 1,
+          id: "successor-session",
+          parentSession: activeSessionFile,
+        })}\n`,
+      );
+      const sessionStore: Record<string, SessionEntry> = {
+        [sessionKey]: {
+          sessionId: "her-app",
+          sessionFile: activeSessionFile,
+          updatedAt: 1,
+        },
+      };
+      await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2));
+
+      const result: EmbeddedPiRunResult = {
+        meta: {
+          durationMs: 1,
+          agentMeta: {
+            sessionId: "her-app",
+            provider: "anthropic",
+            model: "claude-opus-4-8",
+            compactionCount: 1,
+            compactionTokensAfter: 12_345,
+          },
+        },
+      };
+
+      await updateSessionStoreAfterAgentRun({
+        cfg,
+        sessionId: "her-app",
+        sessionKey,
+        storePath,
+        sessionStore,
+        defaultProvider: "anthropic",
+        defaultModel: "claude-opus-4-8",
+        result,
+      });
+
+      expect(sessionStore[sessionKey]?.sessionId).toBe("successor-session");
+      expect(sessionStore[sessionKey]?.sessionFile).toBe(successorSessionFile);
+      expect(sessionStore[sessionKey]?.compactionCount).toBe(1);
+      expect(sessionStore[sessionKey]?.totalTokens).toBe(12_345);
+      const persisted = loadSessionStore(storePath, { skipCache: true })[sessionKey];
+      expect(persisted?.sessionId).toBe("successor-session");
+      expect(persisted?.sessionFile).toBe(successorSessionFile);
+    });
+  });
+
+  it("adopts the compacted successor transcript after post-turn CLI compaction", async () => {
+    await withTempSessionStore(async ({ storePath, dir }) => {
+      const cfg = {
+        agents: {
+          defaults: {
+            compaction: {
+              truncateAfterCompaction: true,
+            },
+          },
+        },
+      } as never;
+      const sessionKey = "agent:main:explicit:her-app";
+      const activeSessionFile = path.join(dir, "her-app.jsonl");
+      const successorSessionFile = path.join(dir, "2026-06-26T00-00-00-000Z_cli-successor.jsonl");
+      await fs.writeFile(
+        activeSessionFile,
+        `${JSON.stringify({ type: "session", version: 1, id: "her-app" })}\n`,
+      );
+      await fs.writeFile(
+        successorSessionFile,
+        `${JSON.stringify({
+          type: "session",
+          version: 1,
+          id: "cli-successor-session",
+          parentSession: activeSessionFile,
+        })}\n`,
+      );
+      const sessionStore: Record<string, SessionEntry> = {
+        [sessionKey]: {
+          sessionId: "her-app",
+          sessionFile: activeSessionFile,
+          updatedAt: 1,
+          compactionCount: 7,
+          cliSessionBindings: {
+            "claude-cli": {
+              sessionId: "claude-session-before-compaction",
+            },
+          },
+        },
+      };
+      await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2));
+
+      await recordCliCompactionInStore({
+        compactionTokensAfter: 321,
+        cfg,
+        provider: "claude-cli",
+        sessionKey,
+        sessionStore,
+        storePath,
+      });
+
+      expect(sessionStore[sessionKey]?.sessionId).toBe("cli-successor-session");
+      expect(sessionStore[sessionKey]?.sessionFile).toBe(successorSessionFile);
+      expect(sessionStore[sessionKey]?.compactionCount).toBe(8);
+      expect(sessionStore[sessionKey]?.totalTokens).toBe(321);
+      expect(sessionStore[sessionKey]?.totalTokensFresh).toBe(true);
+      expect(sessionStore[sessionKey]?.cliSessionBindings?.["claude-cli"]).toBeUndefined();
+      const persisted = loadSessionStore(storePath, { skipCache: true })[sessionKey];
+      expect(persisted?.sessionId).toBe("cli-successor-session");
+      expect(persisted?.sessionFile).toBe(successorSessionFile);
     });
   });
 
