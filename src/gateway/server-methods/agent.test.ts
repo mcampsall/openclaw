@@ -1148,29 +1148,31 @@ describe("gateway agent handler", () => {
     expect(callArgs.message).toContain("sourceTool=subagent_announce");
   });
 
-  it("rejects public transcriptMessage overrides", async () => {
+  it("forwards transcriptMessage overrides for runtime-context turns", async () => {
     primeMainAgentRun({ cfg: mocks.loadConfigReturn });
     mocks.agentCommand.mockClear();
 
-    const respond = await invokeAgent(
+    await invokeAgent(
       {
-        message: "runtime-only announce bookkeeping",
-        transcriptMessage: "",
+        message:
+          "<runtime-context>app state, live-only</runtime-context>\n\n<suriel-turn-input>\nvisible turn</suriel-turn-input>",
+        transcriptMessage: "visible turn",
         agentId: "main",
-        sessionKey: "agent:main:main",
-        inputProvenance: {
-          kind: "inter_session",
-          sourceSessionKey: "agent:main:discord:source",
-          sourceTool: "sessions_send",
-        },
+        sessionKey: "agent:main:explicit:her-app",
+        chatType: "direct",
         idempotencyKey: "test-transcript-message",
       } as AgentParams,
-      { reqId: "transcript-message", flushDispatch: false },
+      { reqId: "transcript-message" },
     );
 
-    const error = expectRespondError(respond, {});
-    expectStringFieldContains(error, "message", "invalid agent params");
-    expect(mocks.agentCommand).not.toHaveBeenCalled();
+    const callArgs = await waitForAgentCommandCall<{
+      message?: string;
+      transcriptMessage?: string;
+      chatType?: string;
+    }>();
+    expect(callArgs.message).toContain("<runtime-context>");
+    expect(callArgs.transcriptMessage).toBe("visible turn");
+    expect(callArgs.chatType).toBe("direct");
   });
 
   it("logs attachment parse failures with stack details", async () => {
