@@ -68,6 +68,9 @@ function resolveAnthropicDefaultAuthMode(
     return "oauth";
   }
 
+  if (usesClaudeCliModelSelection(config)) {
+    return "oauth";
+  }
   if (env.ANTHROPIC_OAUTH_TOKEN?.trim()) {
     return "oauth";
   }

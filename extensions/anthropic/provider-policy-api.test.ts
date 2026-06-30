@@ -98,6 +98,38 @@ describe("anthropic provider policy public artifact", () => {
     expect(nextConfig.agents?.defaults?.contextPruning?.ttl).toBe("1h");
   });
 
+  it("keeps Claude CLI defaults when an ambient Anthropic API key exists", () => {
+    const nextConfig = applyConfigDefaults({
+      config: {
+        agents: {
+          defaults: {
+            model: {
+              primary: "anthropic/claude-opus-4-8",
+            },
+            models: {
+              "anthropic/claude-opus-4-8": {
+                agentRuntime: {
+                  id: "claude-cli",
+                },
+              },
+            },
+          },
+        },
+      },
+      env: {
+        ANTHROPIC_API_KEY: "sk-ant-host",
+      },
+    });
+
+    const opus = nextConfig.agents?.defaults?.models?.["anthropic/claude-opus-4-8"];
+    const haiku = nextConfig.agents?.defaults?.models?.["anthropic/claude-haiku-4-5"];
+    expect(nextConfig.agents?.defaults?.heartbeat?.every).toBe("1h");
+    expect(opus?.agentRuntime?.id).toBe("claude-cli");
+    expect(opus?.params?.cacheRetention).toBeUndefined();
+    expect(haiku?.agentRuntime?.id).toBe("claude-cli");
+    expect(haiku?.params?.cacheRetention).toBeUndefined();
+  });
+
   it("exposes Claude Opus 4.7 thinking levels without loading the full provider plugin", () => {
     const profile = resolveThinkingProfile({
       provider: "anthropic",
