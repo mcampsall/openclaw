@@ -3,7 +3,6 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { AgentCompactionMode } from "../../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import type { CompactResult } from "../../context-engine/types.js";
 import { ensureContextEnginesInitialized as ensureContextEnginesInitializedImpl } from "../../context-engine/init.js";
 import { resolveContextEngine as resolveContextEngineImpl } from "../../context-engine/registry.js";
 import type { ContextEngine } from "../../context-engine/types.js";
@@ -127,7 +126,7 @@ async function compactCliTranscript(params: {
   senderIsOwner?: boolean;
   thinkLevel?: Parameters<typeof buildEmbeddedCompactionRuntimeContext>[0]["thinkLevel"];
   extraSystemPrompt?: string;
-}): Promise<CompactResult["result"] | false> {
+}): Promise<{ tokensAfter?: number } | false> {
   const runtimeContext = {
     ...buildEmbeddedCompactionRuntimeContext({
       sessionKey: params.sessionKey,
@@ -178,7 +177,9 @@ async function compactCliTranscript(params: {
     runtimeContext,
     config: params.cfg,
   });
-  return compactResult.result ?? {};
+  // Must stay truthy even without result details: the caller still has to
+  // record the compaction (clear CLI resume bindings, mark tokens stale).
+  return { tokensAfter: compactResult.result?.tokensAfter };
 }
 
 export async function runCliTurnCompactionLifecycle(params: {
