@@ -357,6 +357,7 @@ export async function executePreparedCliRun(
     runId: params.runId,
     workspaceDir: context.workspaceDir,
     cliSessionId: useResume ? resolvedSessionId : undefined,
+    sessionKey: params.sessionKey,
   });
 
   try {

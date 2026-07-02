@@ -48,6 +48,7 @@ export function resolveCliRunQueueKey(params: {
   runId: string;
   workspaceDir: string;
   cliSessionId?: string;
+  sessionKey?: string;
 }): string {
   if (params.serialize === false) {
     return `${params.backendId}:${params.runId}`;
@@ -57,7 +58,15 @@ export function resolveCliRunQueueKey(params: {
     if (sessionId) {
       return `${params.backendId}:session:${sessionId}`;
     }
+    // Fresh (non-resume) runs scope per session when a session key exists:
+    // resumed runs of distinct sessions already execute concurrently in one
+    // workspace, and a workspace-wide fresh key queued interactive cold-start
+    // turns behind unrelated background sessions (heartbeat/cron wakes).
     const workspaceDir = params.workspaceDir.trim();
+    const sessionKey = params.sessionKey?.trim();
+    if (workspaceDir && sessionKey) {
+      return `${params.backendId}:workspace:${workspaceDir}:sessionKey:${sessionKey}`;
+    }
     if (workspaceDir) {
       return `${params.backendId}:workspace:${workspaceDir}`;
     }

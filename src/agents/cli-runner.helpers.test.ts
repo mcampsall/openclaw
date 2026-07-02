@@ -498,6 +498,60 @@ describe("resolveCliRunQueueKey", () => {
     ).toBe("claude-cli:workspace:/tmp/project-a");
   });
 
+  it("scopes Claude CLI fresh runs per session so sessions do not queue behind each other", () => {
+    expect(
+      resolveCliRunQueueKey({
+        backendId: "claude-cli",
+        serialize: true,
+        runId: "run-1",
+        workspaceDir: "/tmp/project-a",
+        sessionKey: "agent:main:explicit:her-app",
+      }),
+    ).toBe("claude-cli:workspace:/tmp/project-a:sessionKey:agent:main:explicit:her-app");
+    expect(
+      resolveCliRunQueueKey({
+        backendId: "claude-cli",
+        serialize: true,
+        runId: "run-2",
+        workspaceDir: "/tmp/project-a",
+        sessionKey: "agent:main:main",
+      }),
+    ).not.toBe(
+      resolveCliRunQueueKey({
+        backendId: "claude-cli",
+        serialize: true,
+        runId: "run-3",
+        workspaceDir: "/tmp/project-a",
+        sessionKey: "agent:main:explicit:her-app",
+      }),
+    );
+  });
+
+  it("keeps the resumed CLI session id key even when a session key is present", () => {
+    expect(
+      resolveCliRunQueueKey({
+        backendId: "claude-cli",
+        serialize: true,
+        runId: "run-1",
+        workspaceDir: "/tmp/project-a",
+        cliSessionId: "claude-session-123",
+        sessionKey: "agent:main:explicit:her-app",
+      }),
+    ).toBe("claude-cli:session:claude-session-123");
+  });
+
+  it("falls back to the workspace key when the session key is blank", () => {
+    expect(
+      resolveCliRunQueueKey({
+        backendId: "claude-cli",
+        serialize: true,
+        runId: "run-1",
+        workspaceDir: "/tmp/project-a",
+        sessionKey: "  ",
+      }),
+    ).toBe("claude-cli:workspace:/tmp/project-a");
+  });
+
   it("scopes Claude CLI serialization to the resumed CLI session id", () => {
     expect(
       resolveCliRunQueueKey({
