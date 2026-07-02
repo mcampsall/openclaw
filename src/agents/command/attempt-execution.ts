@@ -52,11 +52,26 @@ export {
 
 const log = createSubsystemLogger("agents/agent-command");
 
+// Provider-refusal failovers (quota window, spend limit, capacity) reject the
+// turn before it can dirty the CLI session file, so the stored resume binding
+// is still valid — clearing it would cold-start the conversation once the
+// provider recovers. Only genuinely turn-corrupting failures (aborts,
+// timeouts, unknown errors) should drop the binding (#78785, narrowed).
+const CLI_SESSION_PRESERVING_FAILOVER_REASONS: ReadonlySet<FailoverError["reason"]> = new Set([
+  "rate_limit",
+  "billing",
+  "overloaded",
+]);
+
 function shouldClearReusedCliSessionAfterError(err: unknown): boolean {
   if (readErrorName(err) === "AbortError") {
     return true;
   }
-  return err instanceof FailoverError && err.reason !== "session_expired";
+  return (
+    err instanceof FailoverError &&
+    err.reason !== "session_expired" &&
+    !CLI_SESSION_PRESERVING_FAILOVER_REASONS.has(err.reason)
+  );
 }
 
 function resolveClearedCliSessionReason(err: unknown): string {

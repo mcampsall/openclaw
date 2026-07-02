@@ -75,6 +75,10 @@ const ERROR_PATTERNS = {
     "throttled",
     "throttling",
     "usage limit",
+    // Claude Code CLI subscription-window refusals, e.g. "You've hit your
+    // session limit · resets 1pm (America/Los_Angeles)" (5-hour rolling
+    // window). Without this the message classifies as reason=unknown.
+    /\b(?:hit|reached)\s+your\s+(?:session|usage|\d+[- ]hour)\s+limit\b/i,
     /\btpm\b/i,
     "tokens per minute",
     "tokens per day",

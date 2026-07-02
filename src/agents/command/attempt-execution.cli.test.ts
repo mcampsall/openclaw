@@ -365,6 +365,76 @@ describe("CLI attempt execution", () => {
     expect(sessionStore[sessionKey]?.claudeCliSessionId).toBeUndefined();
   });
 
+  it("keeps reused Claude CLI session IDs after a rate-limit refusal", async () => {
+    const sessionKey = "agent:main:direct:cli-rate-limit";
+    const cliSessionId = "rate-limited-session";
+    await writeClaudeCliAssistantTranscript(cliSessionId);
+    const sessionEntry = makeClaudeCliSessionEntry("session-cli-rate-limit", cliSessionId);
+    const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
+    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    runCliAgentMock.mockRejectedValueOnce(
+      new FailoverError("You've hit your session limit · resets 1pm (America/Los_Angeles)", {
+        reason: "rate_limit",
+        provider: "claude-cli",
+        model: "opus",
+      }),
+    );
+
+    await expect(
+      runClaudeCliAttempt({
+        sessionKey,
+        sessionEntry,
+        sessionStore,
+        body: "resume during quota window",
+        runId: "run-cli-rate-limit",
+      }),
+    ).rejects.toMatchObject({ name: "FailoverError", reason: "rate_limit" });
+
+    expect(runCliAgentMock).toHaveBeenCalledTimes(1);
+    expect(firstRunCliAgentArg().cliSessionId).toBe(cliSessionId);
+    expect(sessionStore[sessionKey]?.cliSessionBindings?.["claude-cli"]?.sessionId).toBe(
+      cliSessionId,
+    );
+    expect(sessionStore[sessionKey]?.cliSessionIds?.["claude-cli"]).toBe(cliSessionId);
+    expect(sessionStore[sessionKey]?.claudeCliSessionId).toBe(cliSessionId);
+  });
+
+  it("keeps reused Claude CLI session IDs after a billing refusal", async () => {
+    const sessionKey = "agent:main:direct:cli-billing";
+    const cliSessionId = "billing-blocked-session";
+    await writeClaudeCliAssistantTranscript(cliSessionId);
+    const sessionEntry = makeClaudeCliSessionEntry("session-cli-billing", cliSessionId);
+    const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
+    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    runCliAgentMock.mockRejectedValueOnce(
+      new FailoverError(
+        "You've hit your monthly spend limit · raise it at claude.ai/settings/usage",
+        {
+          reason: "billing",
+          provider: "claude-cli",
+          model: "opus",
+          status: 402,
+        },
+      ),
+    );
+
+    await expect(
+      runClaudeCliAttempt({
+        sessionKey,
+        sessionEntry,
+        sessionStore,
+        body: "resume during spend cap",
+        runId: "run-cli-billing",
+      }),
+    ).rejects.toMatchObject({ name: "FailoverError", reason: "billing" });
+
+    expect(runCliAgentMock).toHaveBeenCalledTimes(1);
+    expect(sessionStore[sessionKey]?.cliSessionBindings?.["claude-cli"]?.sessionId).toBe(
+      cliSessionId,
+    );
+    expect(sessionStore[sessionKey]?.claudeCliSessionId).toBe(cliSessionId);
+  });
+
   it("does not pass --resume when the stored Claude CLI transcript is missing", async () => {
     const sessionKey = "agent:main:direct:claude-missing-transcript";
     const homeDir = path.join(tmpDir, "home");

@@ -107,3 +107,27 @@ describe("server error status classification", () => {
     expect(isServerErrorMessage("Proxy notice: Status: Internal Server Error")).toBe(false);
   });
 });
+
+describe("Claude CLI subscription window limits", () => {
+  it("classifies the 5-hour session limit refusal as rate limit", () => {
+    expect(
+      isRateLimitErrorMessage("You've hit your session limit · resets 1pm (America/Los_Angeles)"),
+    ).toBe(true);
+  });
+
+  it("classifies reached-your-usage-limit phrasing as rate limit", () => {
+    expect(isRateLimitErrorMessage("You've reached your usage limit.")).toBe(true);
+  });
+
+  it("classifies 5-hour limit phrasing as rate limit", () => {
+    expect(
+      isRateLimitErrorMessage("You've hit your 5-hour limit · resets 6pm (America/Los_Angeles)"),
+    ).toBe(true);
+  });
+
+  it("keeps the monthly spend limit refusal classified as billing", () => {
+    const raw = "You've hit your monthly spend limit · raise it at claude.ai/settings/usage";
+    expect(isBillingErrorMessage(raw)).toBe(true);
+    expect(isRateLimitErrorMessage(raw)).toBe(false);
+  });
+});
