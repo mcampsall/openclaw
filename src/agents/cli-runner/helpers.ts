@@ -325,6 +325,87 @@ export async function writeCliSystemPromptFile(params: {
   };
 }
 
+const CLI_SYSTEM_PROMPT_SNAPSHOT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const SAFE_SNAPSHOT_ID_RE = /^[a-zA-Z0-9_-]+$/;
+
+function cliSystemPromptSnapshotName(cliSessionId: string): string {
+  const trimmed = cliSessionId.trim();
+  if (SAFE_SNAPSHOT_ID_RE.test(trimmed)) {
+    return `${trimmed}.md`;
+  }
+  return `${crypto.createHash("sha256").update(trimmed).digest("hex").slice(0, 32)}.md`;
+}
+
+async function pruneCliSystemPromptSnapshots(dir: string, keepPath: string): Promise<void> {
+  try {
+    const cutoff = Date.now() - CLI_SYSTEM_PROMPT_SNAPSHOT_MAX_AGE_MS;
+    for (const name of await fs.readdir(dir)) {
+      if (!name.endsWith(".md")) {
+        continue;
+      }
+      const filePath = path.join(dir, name);
+      if (filePath === keepPath) {
+        continue;
+      }
+      try {
+        const stat = await fs.stat(filePath);
+        if (stat.mtimeMs < cutoff) {
+          await fs.unlink(filePath);
+        }
+      } catch {
+        // Best-effort prune; never fail the run over it.
+      }
+    }
+  } catch {
+    // Directory unreadable — nothing to prune.
+  }
+}
+
+/**
+ * Durable per-CLI-session system prompt snapshot (systemPromptWhen: "session").
+ *
+ * Claude Code rebuilds the system prompt from the CURRENT invocation's flags on
+ * `--resume` — it does not persist the appended system prompt with the
+ * conversation. Re-rendering the appendix per turn would churn hook-generated
+ * content (recent-sends digests, timestamps) at the very top of context and
+ * invalidate the provider prompt cache on every resumed turn. So: fresh runs
+ * persist the exact bytes they sent; resumed runs re-send those bytes
+ * unchanged. A missing snapshot (reboot, pruned) falls back to persisting the
+ * current build — one cache miss, correctness kept.
+ */
+export async function resolveCliSystemPromptSnapshotFile(params: {
+  snapshotDir?: string;
+  cliSessionId?: string;
+  useResume: boolean;
+  systemPrompt: string;
+}): Promise<{ filePath?: string }> {
+  const dir = params.snapshotDir?.trim();
+  const cliSessionId = params.cliSessionId?.trim();
+  if (!dir || !cliSessionId || !params.systemPrompt.trim()) {
+    return {};
+  }
+  const filePath = path.join(dir, cliSystemPromptSnapshotName(cliSessionId));
+  if (params.useResume) {
+    try {
+      await fs.access(filePath);
+      return { filePath };
+    } catch {
+      // Fall through: adopt the current build as this session's snapshot.
+    }
+  }
+  try {
+    await fs.mkdir(dir, { recursive: true });
+    const tmpPath = `${filePath}.tmp-${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
+    await fs.writeFile(tmpPath, stripSystemPromptCacheBoundary(params.systemPrompt), "utf8");
+    await fs.rename(tmpPath, filePath);
+  } catch {
+    // Durable write failed — caller falls back to the temp-file path.
+    return {};
+  }
+  void pruneCliSystemPromptSnapshots(dir, filePath);
+  return { filePath };
+}
+
 export async function prepareCliPromptImagePayload(params: {
   backend: CliBackendConfig;
   prompt: string;
@@ -377,20 +458,27 @@ export function buildCliArgs(params: {
   imagePaths?: string[];
   promptArg?: string;
   useResume: boolean;
+  /**
+   * systemPromptWhen "session": resumed runs re-send the session's first-turn
+   * system prompt (byte-identical snapshot), since Claude CLI rebuilds the
+   * system prompt from current flags on --resume.
+   */
+  sendSystemPromptOnResume?: boolean;
 }): string[] {
   const args: string[] = [...params.baseArgs];
+  const includeSystemPrompt = !params.useResume || params.sendSystemPromptOnResume === true;
   if (params.backend.modelArg && params.modelId) {
     args.push(params.backend.modelArg, params.modelId);
   }
   if (
-    !params.useResume &&
+    includeSystemPrompt &&
     params.systemPrompt &&
     params.systemPromptFilePath &&
     params.backend.systemPromptFileArg
   ) {
     args.push(params.backend.systemPromptFileArg, params.systemPromptFilePath);
   } else if (
-    !params.useResume &&
+    includeSystemPrompt &&
     params.systemPrompt &&
     params.systemPromptFilePath &&
     params.backend.systemPromptFileConfigKey
@@ -402,7 +490,7 @@ export function buildCliArgs(params: {
         params.systemPromptFilePath,
       ),
     );
-  } else if (!params.useResume && params.systemPrompt && params.backend.systemPromptArg) {
+  } else if (includeSystemPrompt && params.systemPrompt && params.backend.systemPromptArg) {
     args.push(params.backend.systemPromptArg, stripSystemPromptCacheBoundary(params.systemPrompt));
   }
   if (!params.useResume && params.sessionId) {

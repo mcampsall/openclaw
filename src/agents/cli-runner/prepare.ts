@@ -1,4 +1,6 @@
+import path from "node:path";
 import { getRuntimeConfig } from "../../config/config.js";
+import { resolveSessionTranscriptsDirForAgent } from "../../config/sessions/paths.js";
 import { ensureContextEnginesInitialized } from "../../context-engine/init.js";
 import { resolveContextEngine } from "../../context-engine/registry.js";
 import { ensureMcpLoopbackServer } from "../../gateway/mcp-http.js";
@@ -523,6 +525,10 @@ export async function prepareCliRunContext(
       normalizedModel,
       contextWindowInfo,
       systemPrompt,
+      systemPromptSnapshotDir: path.join(
+        resolveSessionTranscriptsDirForAgent(contextEngineSessionAgentId),
+        "cli-system-prompt",
+      ),
       systemPromptReport,
       bootstrapPromptWarningLines: bootstrapPromptWarning.lines,
       ...(openClawHistoryPrompt ? { openClawHistoryPrompt } : {}),

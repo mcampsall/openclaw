@@ -651,7 +651,7 @@ export const CliBackendSchema = z
     systemPromptFileConfigKey: z.string().optional(),
     systemPromptMode: z.union([z.literal("append"), z.literal("replace")]).optional(),
     systemPromptWhen: z
-      .union([z.literal("first"), z.literal("always"), z.literal("never")])
+      .union([z.literal("first"), z.literal("always"), z.literal("never"), z.literal("session")])
       .optional(),
     imageArg: z.string().optional(),
     imageMode: z.union([z.literal("repeat"), z.literal("list")]).optional(),

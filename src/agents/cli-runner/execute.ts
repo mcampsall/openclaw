@@ -28,6 +28,7 @@ import {
   prepareCliPromptImagePayload,
   resolveCliNoOutputTimeoutMs,
   resolvePromptInput,
+  resolveCliSystemPromptSnapshotFile,
   resolveSessionIdToSend,
   resolveSystemPromptUsage,
   writeCliSystemPromptFile,
@@ -281,8 +282,23 @@ export async function executePreparedCliRun(
     isNewSession: isNew,
     systemPrompt: context.systemPrompt,
   });
+  // systemPromptWhen "session": persist the fresh run's exact appendix bytes
+  // and re-send them on every resume of the same CLI conversation (Claude CLI
+  // rebuilds the system prompt from current flags on --resume; re-rendering
+  // per turn would churn the prompt-cache prefix).
+  const systemPromptSnapshot =
+    systemPromptArg &&
+    (backend.systemPromptWhen ?? "first") === "session" &&
+    backend.systemPromptFileArg?.trim()
+      ? await resolveCliSystemPromptSnapshotFile({
+          snapshotDir: context.systemPromptSnapshotDir,
+          cliSessionId: resolvedSessionId,
+          useResume,
+          systemPrompt: systemPromptArg,
+        })
+      : undefined;
   const systemPromptFile =
-    !useResume && systemPromptArg
+    !useResume && systemPromptArg && !systemPromptSnapshot?.filePath
       ? await writeCliSystemPromptFile({
           backend,
           systemPrompt: systemPromptArg,
@@ -345,10 +361,11 @@ export async function executePreparedCliRun(
     modelId: context.normalizedModel,
     sessionId: resolvedSessionId,
     systemPrompt: systemPromptArg,
-    systemPromptFilePath: systemPromptFile?.filePath,
+    systemPromptFilePath: systemPromptSnapshot?.filePath ?? systemPromptFile?.filePath,
     imagePaths,
     promptArg: argsPrompt,
     useResume,
+    sendSystemPromptOnResume: Boolean(systemPromptSnapshot?.filePath),
   });
 
   const queueKey = resolveCliRunQueueKey({

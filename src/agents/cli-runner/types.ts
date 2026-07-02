@@ -125,6 +125,8 @@ export type PreparedCliRunContext = {
   normalizedModel: string;
   contextWindowInfo?: ContextWindowInfo;
   systemPrompt: string;
+  /** Durable per-CLI-session appendix snapshots (systemPromptWhen: "session"). */
+  systemPromptSnapshotDir?: string;
   systemPromptReport: SessionSystemPromptReport;
   bootstrapPromptWarningLines: string[];
   openClawHistoryPrompt?: string;

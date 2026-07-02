@@ -149,8 +149,13 @@ export type CliBackendConfig = {
   systemPromptFileConfigKey?: string;
   /** System prompt behavior (append vs replace). */
   systemPromptMode?: "append" | "replace";
-  /** When to send system prompt. */
-  systemPromptWhen?: "first" | "always" | "never";
+  /**
+   * When to send system prompt. "session" sends it on fresh runs AND re-sends
+   * the session's first-turn bytes (durable snapshot) on resumed runs — for
+   * CLIs like Claude Code whose --resume rebuilds the system prompt from
+   * current flags instead of persisting it with the conversation.
+   */
+  systemPromptWhen?: "first" | "always" | "never" | "session";
   /** Flag used to pass image paths. */
   imageArg?: string;
   /** How to pass multiple images. */

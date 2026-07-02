@@ -67,7 +67,10 @@ export function buildAnthropicCliBackend(): CliBackendPlugin {
       sessionIdFields: [...CLAUDE_CLI_SESSION_ID_FIELDS],
       systemPromptFileArg: "--append-system-prompt-file",
       systemPromptMode: "append",
-      systemPromptWhen: "first",
+      // "session": Claude Code rebuilds the system prompt from current flags on
+      // --resume (does not persist the appendix with the conversation), so the
+      // runner re-sends the session's first-turn snapshot on every resume.
+      systemPromptWhen: "session",
       clearEnv: [...CLAUDE_CLI_CLEAR_ENV],
       reliability: {
         watchdog: {
