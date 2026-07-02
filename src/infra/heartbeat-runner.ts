@@ -719,6 +719,43 @@ function resolveHeartbeatReasoningPayloads(
   return reasoningPayloads;
 }
 
+// Heartbeat replies that are INTENTIONALLY not delivered (target "none", or
+// visibility alerts disabled) are complete, not awaiting a durable-delivery
+// retry. agent-runner marks every policy-visible final reply
+// pendingFinalDelivery before delivery targeting is known; only a successful
+// outbound send clears it. Without this clear, the next heartbeat run replays
+// the stored text instead of running the agent (get-reply pending-final
+// short-circuit) and the flag re-arms forever: the heartbeat wedges after its
+// first substantive reply. Observed live 2026-07-02 on
+// agent:main:explicit:heartbeat (target "none").
+async function clearHeartbeatPendingFinalDelivery(params: {
+  storePath: string;
+  sessionKey: string;
+}) {
+  const { storePath, sessionKey } = params;
+  const store = loadSessionStore(storePath);
+  const entry = store[sessionKey];
+  if (!entry?.pendingFinalDelivery && !entry?.pendingFinalDeliveryText) {
+    return;
+  }
+  await updateSessionStore(storePath, (nextStore) => {
+    const nextEntry = nextStore[sessionKey];
+    if (!nextEntry) {
+      return;
+    }
+    nextStore[sessionKey] = {
+      ...nextEntry,
+      pendingFinalDelivery: undefined,
+      pendingFinalDeliveryText: undefined,
+      pendingFinalDeliveryCreatedAt: undefined,
+      pendingFinalDeliveryLastAttemptAt: undefined,
+      pendingFinalDeliveryAttemptCount: undefined,
+      pendingFinalDeliveryLastError: undefined,
+      pendingFinalDeliveryContext: undefined,
+    };
+  });
+}
+
 async function restoreHeartbeatUpdatedAt(params: {
   storePath: string;
   sessionKey: string;
@@ -1916,6 +1953,7 @@ export async function runHeartbeatOnce(opts: {
       : normalized.text;
 
     if (delivery.channel === "none" || !delivery.to) {
+      await clearHeartbeatPendingFinalDelivery({ storePath, sessionKey: runSessionKey });
       emitHeartbeatEvent({
         status: "skipped",
         reason: delivery.reason ?? "no-target",
@@ -1930,6 +1968,7 @@ export async function runHeartbeatOnce(opts: {
     }
 
     if (!visibility.showAlerts) {
+      await clearHeartbeatPendingFinalDelivery({ storePath, sessionKey: runSessionKey });
       await updateTaskTimestamps();
       await restoreHeartbeatUpdatedAt({
         storePath,
