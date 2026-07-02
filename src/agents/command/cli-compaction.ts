@@ -92,13 +92,34 @@ function resolvePositiveInteger(value: number | undefined): number | undefined {
 }
 
 function getSessionBranchMessages(sessionManager: SessionManagerLike): AgentMessage[] {
-  return sessionManager
-    .getBranch()
-    .flatMap((entry) =>
-      entry.type === "message" && typeof entry.message === "object" && entry.message !== null
-        ? [entry.message]
-        : [],
-    );
+  const branch = sessionManager.getBranch();
+  // A compaction boundary replaces everything before it in the resumed
+  // context. Measuring the raw branch ignores that: the estimate can never
+  // drop below the budget again, so cli_budget compaction re-triggers on
+  // every turn and each run re-summarizes the same history (the her-app
+  // compaction storm). Cut at the most recent boundary and count its summary
+  // in place of the messages it replaced.
+  let boundaryIdx = -1;
+  for (let i = branch.length - 1; i >= 0; i -= 1) {
+    const type = (branch[i] as { type?: unknown }).type;
+    if (type === "compaction" || type === "branch_summary") {
+      boundaryIdx = i;
+      break;
+    }
+  }
+  const messages: AgentMessage[] = [];
+  if (boundaryIdx >= 0) {
+    const summary = (branch[boundaryIdx] as { summary?: unknown }).summary;
+    if (typeof summary === "string" && summary.trim()) {
+      messages.push({ role: "user", content: summary, timestamp: 0 } as AgentMessage);
+    }
+  }
+  for (const entry of branch.slice(boundaryIdx + 1)) {
+    if (entry.type === "message" && typeof entry.message === "object" && entry.message !== null) {
+      messages.push(entry.message);
+    }
+  }
+  return messages;
 }
 
 function resolveSessionTokenSnapshot(sessionEntry: SessionEntry | undefined): number | undefined {

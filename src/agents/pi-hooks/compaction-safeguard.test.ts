@@ -2262,6 +2262,90 @@ describe("compaction-safeguard double-compaction guard", () => {
     ).toBe(true);
   });
 
+  it("cuts the session-branch fallback at the most recent compaction boundary", async () => {
+    mockSummarizeInStages.mockReset();
+    mockSummarizeInStages.mockResolvedValue("tail summary");
+
+    const now = Date.now();
+    const sessionManager = {
+      ...stubSessionManager(),
+      getBranch: () => [
+        {
+          type: "message",
+          id: "old-1",
+          parentId: null,
+          timestamp: new Date(now).toISOString(),
+          message: { role: "user", content: "ancient history ask", timestamp: now },
+        },
+        {
+          type: "message",
+          id: "old-2",
+          parentId: "old-1",
+          timestamp: new Date(now + 1).toISOString(),
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "ancient history answer" }],
+            timestamp: now + 1,
+          },
+        },
+        {
+          type: "compaction",
+          id: "boundary-1",
+          parentId: "old-2",
+          timestamp: new Date(now + 2).toISOString(),
+          summary: "prior history summary",
+        },
+        {
+          type: "message",
+          id: "tail-1",
+          parentId: "boundary-1",
+          timestamp: new Date(now + 3).toISOString(),
+          message: { role: "user", content: "fresh tail ask", timestamp: now + 3 },
+        },
+        {
+          type: "message",
+          id: "tail-2",
+          parentId: "tail-1",
+          timestamp: new Date(now + 4).toISOString(),
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "fresh tail answer" }],
+            timestamp: now + 4,
+          },
+        },
+      ],
+    } as ExtensionContext["sessionManager"];
+    const model = createAnthropicModelFixture();
+    setCompactionSafeguardRuntime(sessionManager, { model, recentTurnsPreserve: 0 });
+
+    const mockEvent = {
+      preparation: {
+        messagesToSummarize: [] as AgentMessage[],
+        turnPrefixMessages: [] as AgentMessage[],
+        firstKeptEntryId: "entry-5",
+        tokensBefore: 38085,
+        fileOps: { read: [], edited: [], written: [] },
+        settings: { reserveTokens: 4000 },
+        isSplitTurn: false,
+      },
+      customInstructions: "",
+      signal: new AbortController().signal,
+    };
+    const { result } = await runCompactionScenario({
+      sessionManager,
+      event: mockEvent,
+      apiKey: "test-key",
+    });
+
+    expectCompactionResult(result);
+    expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
+    const summarizeCall = requireRecord(mockCallArg(mockSummarizeInStages));
+    const serialized = JSON.stringify(requireArray(summarizeCall.messages));
+    expect(serialized).toContain("prior history summary");
+    expect(serialized).toContain("fresh tail ask");
+    expect(serialized).not.toContain("ancient history ask");
+  });
+
   it("continues when messages include real conversation content", async () => {
     const sessionManager = stubSessionManager();
     const model = createAnthropicModelFixture();

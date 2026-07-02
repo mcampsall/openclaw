@@ -177,6 +177,97 @@ describe("runCliTurnCompactionLifecycle", () => {
     expect(updatedEntry?.claudeCliSessionId).toBeUndefined();
   });
 
+  it("does not re-trigger compaction for history behind a compaction boundary", async () => {
+    const sessionKey = "agent:main:cli-boundary";
+    const sessionId = "session-cli-boundary";
+    const sessionFile = path.join(tmpDir, "session-boundary.jsonl");
+    const storePath = path.join(tmpDir, "sessions-boundary.json");
+    const now = Date.now();
+    await fs.mkdir(path.dirname(sessionFile), { recursive: true });
+    await fs.writeFile(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session",
+          version: CURRENT_SESSION_VERSION,
+          id: sessionId,
+          timestamp: new Date(0).toISOString(),
+          cwd: path.dirname(sessionFile),
+        }),
+        // Pre-boundary history large enough to blow the 1,000-token budget on
+        // its own (raw-branch measurement would re-trigger forever).
+        JSON.stringify({
+          type: "message",
+          message: { role: "user", content: "x".repeat(8_000), timestamp: now },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "y".repeat(8_000) }],
+            timestamp: now + 1,
+          },
+        }),
+        JSON.stringify({
+          type: "compaction",
+          summary: "short summary of the ancient history",
+          tokensBefore: 5_000,
+          timestamp: new Date(now + 2).toISOString(),
+        }),
+        JSON.stringify({
+          type: "message",
+          message: { role: "user", content: "fresh tail ask", timestamp: now + 3 },
+        }),
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const sessionEntry: SessionEntry = {
+      sessionId,
+      updatedAt: Date.now(),
+      sessionFile,
+      contextTokens: 1_000,
+      totalTokens: 100,
+      totalTokensFresh: true,
+    };
+    const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
+    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+
+    const compactCalls: Array<Parameters<ContextEngine["compact"]>[0]> = [];
+    setCliCompactionTestDeps({
+      resolveContextEngine: async () => buildContextEngine({ compactCalls }),
+      createPreparedEmbeddedPiSettingsManager: async () => ({
+        getCompactionReserveTokens: () => 200,
+        getCompactionKeepRecentTokens: () => 0,
+        applyOverrides: () => {},
+      }),
+      resolveLiveToolResultMaxChars: () => 20_000,
+      runContextEngineMaintenance: vi.fn(async () => ({
+        changed: false,
+        bytesFreed: 0,
+        rewrittenEntries: 0,
+      })),
+    });
+
+    const updatedEntry = await runCliTurnCompactionLifecycle({
+      cfg: {} as OpenClawConfig,
+      sessionId,
+      sessionKey,
+      sessionEntry,
+      sessionStore,
+      storePath,
+      sessionAgentId: "main",
+      workspaceDir: tmpDir,
+      agentDir: tmpDir,
+      provider: "claude-cli",
+      model: "opus",
+    });
+
+    expect(compactCalls).toHaveLength(0);
+    expect(updatedEntry).toBe(sessionEntry);
+  });
+
   it("initializes built-in context engines before resolving CLI compaction engine", async () => {
     const sessionKey = "agent:main:cli";
     const sessionId = "session-cli-init";

@@ -142,7 +142,7 @@ function sessionBranchEntryToMessage(entry: SessionBranchEntry): AgentMessage | 
       timestamp: coerceTimestamp(entry.timestamp),
     } as AgentMessage;
   }
-  if (entry.type === "branch_summary") {
+  if (entry.type === "branch_summary" || entry.type === "compaction") {
     return {
       role: "branchSummary",
       summary: typeof entry.summary === "string" ? entry.summary : "",
@@ -167,7 +167,20 @@ function collectSessionBranchMessages(sessionManager: unknown): AgentMessage[] {
   if (!Array.isArray(entries)) {
     return [];
   }
-  return entries
+  // Honor the most recent compaction boundary: everything before it is
+  // already represented by its summary. Without this cut, the branch
+  // fallback re-summarizes the entire raw history on every compaction of a
+  // long-lived session (redundant work and quota burn on each rotation).
+  let boundaryIdx = -1;
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const type = (entries[i] as { type?: unknown } | undefined)?.type;
+    if (type === "compaction" || type === "branch_summary") {
+      boundaryIdx = i;
+      break;
+    }
+  }
+  const tail = boundaryIdx >= 0 ? entries.slice(boundaryIdx) : entries;
+  return tail
     .map((entry) =>
       entry && typeof entry === "object"
         ? sessionBranchEntryToMessage(entry as SessionBranchEntry)
