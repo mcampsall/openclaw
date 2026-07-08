@@ -435,6 +435,41 @@ describe("CLI attempt execution", () => {
     expect(sessionStore[sessionKey]?.claudeCliSessionId).toBe(cliSessionId);
   });
 
+  it("keeps reused Claude CLI session IDs after a not-logged-in credential refusal", async () => {
+    const sessionKey = "agent:main:direct:cli-logged-out";
+    const cliSessionId = "logged-out-session";
+    await writeClaudeCliAssistantTranscript(cliSessionId);
+    const sessionEntry = makeClaudeCliSessionEntry("session-cli-logged-out", cliSessionId);
+    const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
+    await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+    // Credential refusals (e.g. locked login keychain after an auto-login
+    // reboot) reject at CLI startup before the session file is touched, but
+    // classify as reason=unknown — the binding must survive them.
+    runCliAgentMock.mockRejectedValueOnce(
+      new FailoverError("Not logged in · Please run /login", {
+        reason: "unknown",
+        provider: "claude-cli",
+        model: "opus",
+      }),
+    );
+
+    await expect(
+      runClaudeCliAttempt({
+        sessionKey,
+        sessionEntry,
+        sessionStore,
+        body: "resume while logged out",
+        runId: "run-cli-logged-out",
+      }),
+    ).rejects.toMatchObject({ name: "FailoverError", reason: "unknown" });
+
+    expect(runCliAgentMock).toHaveBeenCalledTimes(1);
+    expect(sessionStore[sessionKey]?.cliSessionBindings?.["claude-cli"]?.sessionId).toBe(
+      cliSessionId,
+    );
+    expect(sessionStore[sessionKey]?.claudeCliSessionId).toBe(cliSessionId);
+  });
+
   it("does not pass --resume when the stored Claude CLI transcript is missing", async () => {
     const sessionKey = "agent:main:direct:claude-missing-transcript";
     const homeDir = path.join(tmpDir, "home");

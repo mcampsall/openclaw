@@ -63,14 +63,24 @@ const CLI_SESSION_PRESERVING_FAILOVER_REASONS: ReadonlySet<FailoverError["reason
   "overloaded",
 ]);
 
+// Claude Code CLI credential refusals ("Not logged in · Please run /login" —
+// e.g. a locked login keychain after an auto-login reboot) reject the turn at
+// startup, before the session file is touched. Same preservation rationale as
+// the reasons above, but they classify as reason=unknown, so match the text.
+const CLI_SESSION_PRESERVING_ERROR_TEXT_RE = /not logged in|please run \/login/i;
+
 function shouldClearReusedCliSessionAfterError(err: unknown): boolean {
   if (readErrorName(err) === "AbortError") {
     return true;
   }
+  if (!(err instanceof FailoverError)) {
+    return false;
+  }
+  if (CLI_SESSION_PRESERVING_ERROR_TEXT_RE.test(`${err.message} ${err.rawError ?? ""}`)) {
+    return false;
+  }
   return (
-    err instanceof FailoverError &&
-    err.reason !== "session_expired" &&
-    !CLI_SESSION_PRESERVING_FAILOVER_REASONS.has(err.reason)
+    err.reason !== "session_expired" && !CLI_SESSION_PRESERVING_FAILOVER_REASONS.has(err.reason)
   );
 }
 
