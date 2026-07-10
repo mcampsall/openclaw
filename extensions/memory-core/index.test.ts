@@ -1,5 +1,6 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { describe, expect, it } from "vitest";
+import plugin from "./index.js";
 import {
   buildMemoryFlushPlan,
   DEFAULT_MEMORY_FLUSH_FORCE_TRANSCRIPT_BYTES,
@@ -7,6 +8,14 @@ import {
   DEFAULT_MEMORY_FLUSH_SOFT_TOKENS,
 } from "./src/flush-plan.js";
 import { buildPromptSection } from "./src/prompt-section.js";
+
+describe("memory-core plugin", () => {
+  it("treats the dreaming enable switch as a dynamic read", () => {
+    expect(plugin.reload?.noopPrefixes).toContain(
+      "plugins.entries.memory-core.config.dreaming.enabled",
+    );
+  });
+});
 
 describe("buildPromptSection", () => {
   it("returns empty when no memory tools are available", () => {

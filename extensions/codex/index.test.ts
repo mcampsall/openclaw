@@ -23,6 +23,10 @@ function mockCallArg(mock: { mock: { calls: unknown[][] } }, index = 0, argIndex
 }
 
 describe("codex plugin", () => {
+  it("treats Computer Use config as a dynamic read", () => {
+    expect(plugin.reload?.noopPrefixes).toContain("plugins.entries.codex.config.computerUse");
+  });
+
   it("is opt-in by default", () => {
     const manifest = JSON.parse(
       fs.readFileSync(new URL("./openclaw.plugin.json", import.meta.url), "utf8"),
@@ -148,6 +152,26 @@ describe("codex plugin", () => {
         nativeHookRelay: { enabled: true },
       },
     );
+  });
+
+  it("resolves current plugin config for each Codex attempt", async () => {
+    let current = { computerUse: { enabled: false } };
+    const harness = createCodexAppServerAgentHarness({
+      pluginConfig: { computerUse: { enabled: true } },
+      getPluginConfig: () => current,
+    });
+    runCodexAppServerAttemptMock.mockResolvedValue({ success: true });
+
+    await harness.runAttempt({ prompt: "first" } as never);
+    current = { computerUse: { enabled: true } };
+    await harness.runAttempt({ prompt: "second" } as never);
+
+    expect(mockCallArg(runCodexAppServerAttemptMock, 0, 1)).toMatchObject({
+      pluginConfig: { computerUse: { enabled: false } },
+    });
+    expect(mockCallArg(runCodexAppServerAttemptMock, 1, 1)).toMatchObject({
+      pluginConfig: { computerUse: { enabled: true } },
+    });
   });
 
   it("enables the native hook relay for public Codex side questions", async () => {

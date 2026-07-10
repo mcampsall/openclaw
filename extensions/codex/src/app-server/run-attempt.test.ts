@@ -1015,6 +1015,36 @@ describe("runCodexAppServerAttempt", () => {
     });
   });
 
+  it("continues an ordinary turn with interactive device MCP servers disabled when setup fails", async () => {
+    const harness = createStartedThreadHarness();
+    const params = createParams(
+      path.join(tempDir, "session.jsonl"),
+      path.join(tempDir, "workspace"),
+    );
+
+    const run = runCodexAppServerAttempt(params, {
+      pluginConfig: {
+        computerUse: {
+          enabled: true,
+          autoInstall: false,
+          marketplaceName: "desktop-tools",
+        },
+      },
+    });
+    await harness.waitForMethod("turn/start", 120_000);
+    await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+    await expect(run).resolves.toMatchObject({ success: true });
+
+    const threadStart = harness.requests.find((entry) => entry.method === "thread/start");
+    expect((threadStart?.params as { config?: unknown } | undefined)?.config).toMatchObject({
+      mcp_servers: {
+        node_repl: { enabled: false },
+        "computer-use": { enabled: false },
+        "event-stream": { enabled: false },
+      },
+    });
+  });
+
   it("forces the message dynamic tool for message-tool-only source replies", () => {
     const workspaceDir = path.join(tempDir, "workspace");
     const params = createParams(path.join(tempDir, "session.jsonl"), workspaceDir);

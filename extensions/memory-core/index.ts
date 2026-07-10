@@ -172,6 +172,11 @@ export default definePluginEntry({
   name: "Memory (Core)",
   description: "File-backed memory search tools and CLI",
   kind: "memory",
+  reload: {
+    // Dreaming resolves the current config when its phase runs. Its toggle is
+    // not a reason to replace all gateway plugin services mid-conversation.
+    noopPrefixes: ["plugins.entries.memory-core.config.dreaming.enabled"],
+  },
   register(api) {
     registerBuiltInMemoryEmbeddingProviders(api);
     registerShortTermPromotionDreaming(api);

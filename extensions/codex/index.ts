@@ -22,6 +22,11 @@ export default definePluginEntry({
   id: "codex",
   name: "Codex",
   description: "Codex app-server harness and Codex-managed GPT model catalog.",
+  reload: {
+    // Read per turn through runtime.config.current(); changing this optional
+    // capability must not tear down every unrelated plugin service.
+    noopPrefixes: ["plugins.entries.codex.config.computerUse"],
+  },
   register(api) {
     const resolveCurrentPluginConfig = () =>
       resolveLivePluginConfigObject(
@@ -31,7 +36,12 @@ export default definePluginEntry({
         "codex",
         api.pluginConfig as Record<string, unknown>,
       ) ?? api.pluginConfig;
-    api.registerAgentHarness(createCodexAppServerAgentHarness({ pluginConfig: api.pluginConfig }));
+    api.registerAgentHarness(
+      createCodexAppServerAgentHarness({
+        pluginConfig: api.pluginConfig,
+        getPluginConfig: resolveCurrentPluginConfig,
+      }),
+    );
     api.registerProvider(buildCodexProvider({ pluginConfig: api.pluginConfig }));
     api.registerMediaUnderstandingProvider(
       buildCodexMediaUnderstandingProvider({ pluginConfig: api.pluginConfig }),

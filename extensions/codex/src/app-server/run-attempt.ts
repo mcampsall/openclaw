@@ -1157,10 +1157,6 @@ export async function runCodexAppServerAttempt(
       : options.nativeHookRelay?.enabled === false
         ? buildCodexNativeHookRelayDisabledConfig()
         : undefined;
-    const threadConfig = mergeCodexThreadConfigs(
-      bundleMcpThreadConfig?.configPatch as JsonObject | undefined,
-      buildCodexInteractiveDeviceToolsScopeConfig(interactiveDeviceToolsEnabled),
-    );
     const nativeToolSurfaceRestricted = !nativeToolSurfaceEnabled;
     const pluginThreadConfigRequired =
       nativeToolSurfaceRestricted || shouldBuildCodexPluginThreadConfig(pluginConfig);
@@ -1212,14 +1208,29 @@ export async function runCodexAppServerAttempt(
           );
           attemptedClient = startupClient;
           startupClientForCleanup = startupClient;
+          let interactiveDeviceToolsReady = false;
           if (interactiveDeviceToolsEnabled) {
-            await ensureCodexComputerUse({
-              client: startupClient,
-              pluginConfig: options.pluginConfig,
-              timeoutMs: appServer.requestTimeoutMs,
-              signal: runAbortController.signal,
-            });
+            try {
+              const status = await ensureCodexComputerUse({
+                client: startupClient,
+                pluginConfig: options.pluginConfig,
+                timeoutMs: appServer.requestTimeoutMs,
+                signal: runAbortController.signal,
+              });
+              interactiveDeviceToolsReady = status.ready;
+            } catch (error) {
+              if (runAbortController.signal.aborted) {
+                throw error;
+              }
+              embeddedAgentLog.warn(
+                `Codex Computer Use unavailable for this turn; continuing without it: ${String(error)}`,
+              );
+            }
           }
+          const threadConfig = mergeCodexThreadConfigs(
+            bundleMcpThreadConfig?.configPatch as JsonObject | undefined,
+            buildCodexInteractiveDeviceToolsScopeConfig(interactiveDeviceToolsReady),
+          );
           const buildThreadLifecycleParams = () =>
             ({
               client: startupClient,
