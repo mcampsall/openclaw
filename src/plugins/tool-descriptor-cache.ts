@@ -6,6 +6,7 @@ import type { PluginLoadOptions } from "./loader.js";
 import type { OpenClawPluginToolContext } from "./types.js";
 
 const PLUGIN_TOOL_DESCRIPTOR_CACHE_VERSION = 1;
+const PLUGIN_TOOL_DESCRIPTOR_CACHE_METADATA_VERSION = 1;
 const PLUGIN_TOOL_DESCRIPTOR_CACHE_LIMIT = 256;
 
 export type CachedPluginToolDescriptor = {
@@ -15,7 +16,17 @@ export type CachedPluginToolDescriptor = {
   optional: boolean;
 };
 
-const descriptorCache = new Map<string, CachedPluginToolDescriptor[]>();
+export type PluginToolDescriptorCacheMetadata = {
+  version: typeof PLUGIN_TOOL_DESCRIPTOR_CACHE_METADATA_VERSION;
+  dynamicToolNames: readonly string[];
+};
+
+type PluginToolDescriptorCacheEntry = {
+  descriptors: CachedPluginToolDescriptor[];
+  metadata?: PluginToolDescriptorCacheMetadata;
+};
+
+const descriptorCache = new Map<string, PluginToolDescriptorCacheEntry>();
 let descriptorCacheObjectIds = new WeakMap<object, number>();
 let nextDescriptorCacheObjectId = 1;
 
@@ -168,12 +179,23 @@ export function capturePluginToolDescriptor(params: {
 export function readCachedPluginToolDescriptors(
   cacheKey: string,
 ): readonly CachedPluginToolDescriptor[] | undefined {
-  return descriptorCache.get(cacheKey);
+  return descriptorCache.get(cacheKey)?.descriptors;
+}
+
+export function readPluginToolDescriptorCacheMetadata(
+  cacheKey: string,
+): PluginToolDescriptorCacheMetadata | undefined {
+  const metadata = descriptorCache.get(cacheKey)?.metadata;
+  if (metadata?.version !== PLUGIN_TOOL_DESCRIPTOR_CACHE_METADATA_VERSION) {
+    return undefined;
+  }
+  return metadata;
 }
 
 export function writeCachedPluginToolDescriptors(params: {
   cacheKey: string;
   descriptors: readonly CachedPluginToolDescriptor[];
+  metadata?: PluginToolDescriptorCacheMetadata;
 }): void {
   if (
     !descriptorCache.has(params.cacheKey) &&
@@ -184,5 +206,15 @@ export function writeCachedPluginToolDescriptors(params: {
       descriptorCache.delete(oldestKey);
     }
   }
-  descriptorCache.set(params.cacheKey, [...params.descriptors]);
+  descriptorCache.set(params.cacheKey, {
+    descriptors: [...params.descriptors],
+    ...(params.metadata
+      ? {
+          metadata: {
+            version: params.metadata.version,
+            dynamicToolNames: [...params.metadata.dynamicToolNames],
+          },
+        }
+      : {}),
+  });
 }

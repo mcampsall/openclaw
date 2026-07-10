@@ -3,6 +3,13 @@ import { DEFAULT_PLUGIN_TOOLS_ALLOWLIST_ENTRY } from "../agents/tool-policy.js";
 import { resetLogger, setLoggerOverride } from "../logging/logger.js";
 import { loggingState } from "../logging/state.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
+import {
+  buildPluginToolDescriptorCacheKey,
+  capturePluginToolDescriptor,
+  readCachedPluginToolDescriptors,
+  writeCachedPluginToolDescriptors,
+} from "./tool-descriptor-cache.js";
+import type { AnyAgentTool } from "./types.js";
 
 type MockRegistryToolEntry = {
   pluginId: string;
@@ -10,6 +17,7 @@ type MockRegistryToolEntry = {
   source: string;
   names: string[];
   declaredNames?: string[];
+  dynamicAvailability?: boolean;
   factory: (ctx: unknown) => unknown;
 };
 
@@ -48,6 +56,18 @@ function makeTool(name: string) {
     parameters: { type: "object", properties: {} },
     async execute() {
       return { content: [{ type: "text", text: "ok" }] };
+    },
+  };
+}
+
+function makeDescriptorTool(name: string): AnyAgentTool {
+  return {
+    name,
+    label: `${name} tool`,
+    description: `${name} tool`,
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      return { content: [{ type: "text", text: "ok" }], details: {} };
     },
   };
 }
@@ -1644,6 +1664,245 @@ describe("resolvePluginTools optional tools", () => {
       content: [{ type: "text", text: "same" }],
     });
     expect(factory).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses versioned static descriptors on a cold start without loading a registry", () => {
+    const context = createContext();
+    installToolManifestSnapshot({
+      config: context.config,
+      plugin: {
+        id: "cold-static-cache-test",
+        origin: "bundled",
+        enabledByDefault: true,
+        channels: [],
+        providers: [],
+        contracts: { tools: ["cold_static_tool"] },
+      },
+    });
+    const cacheKey = buildPluginToolDescriptorCacheKey({
+      pluginId: "cold-static-cache-test",
+      source: "cold-static-cache-test",
+      contractToolNames: ["cold_static_tool"],
+      ctx: context as never,
+    });
+    writeCachedPluginToolDescriptors({
+      cacheKey,
+      descriptors: [
+        capturePluginToolDescriptor({
+          pluginId: "cold-static-cache-test",
+          optional: false,
+          tool: makeDescriptorTool("cold_static_tool"),
+        }),
+      ],
+      metadata: { version: 1, dynamicToolNames: [] },
+    });
+
+    const tools = resolvePluginTools(createResolveToolsParams({ context }));
+
+    expectResolvedToolNames(tools, ["cold_static_tool"]);
+    expect(loadOpenClawPluginsMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for cold descriptor caches without availability metadata", () => {
+    const context = createContext();
+    const factory = vi.fn(() => ({ ...makeTool("metadata_checked_tool"), description: "runtime" }));
+    const registry = createToolRegistry([
+      {
+        pluginId: "metadata-cache-test",
+        optional: false,
+        source: "/tmp/metadata-cache-test.js",
+        names: ["metadata_checked_tool"],
+        factory,
+      },
+    ]);
+    loadOpenClawPluginsMock.mockReturnValue(registry);
+    installToolManifestSnapshot({
+      config: context.config,
+      plugin: {
+        id: "metadata-cache-test",
+        origin: "bundled",
+        enabledByDefault: true,
+        channels: [],
+        providers: [],
+        contracts: { tools: ["metadata_checked_tool"] },
+      },
+    });
+    const cacheKey = buildPluginToolDescriptorCacheKey({
+      pluginId: "metadata-cache-test",
+      source: "metadata-cache-test",
+      contractToolNames: ["metadata_checked_tool"],
+      ctx: context as never,
+    });
+    writeCachedPluginToolDescriptors({
+      cacheKey,
+      descriptors: [
+        capturePluginToolDescriptor({
+          pluginId: "metadata-cache-test",
+          optional: false,
+          tool: {
+            ...makeDescriptorTool("metadata_checked_tool"),
+            description: "stale",
+          },
+        }),
+      ],
+    });
+
+    const tools = resolvePluginTools(createResolveToolsParams({ context }));
+
+    expectResolvedToolNames(tools, ["metadata_checked_tool"]);
+    expect(tools[0]?.description).toBe("runtime");
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(loadOpenClawPluginsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-evaluates dynamic optional tools and ignores stale cached descriptors", async () => {
+    let available = true;
+    const staleExecute = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: "stale" }],
+      details: {},
+    }));
+    const factory = vi.fn(() => {
+      if (!available) {
+        return null;
+      }
+      return {
+        ...makeTool("dynamic_tool"),
+        description: "live dynamic tool",
+        async execute() {
+          return { content: [{ type: "text", text: "live" }] };
+        },
+      };
+    });
+    setRegistry([
+      {
+        pluginId: "dynamic-cache-test",
+        optional: true,
+        source: "/tmp/dynamic-cache-test.js",
+        names: ["dynamic_tool"],
+        dynamicAvailability: true,
+        factory,
+      },
+    ]);
+    const context = { ...createContext(), sessionId: "dynamic-session" };
+    const cacheKey = buildPluginToolDescriptorCacheKey({
+      pluginId: "dynamic-cache-test",
+      // setRegistry's manifest snapshot intentionally omits source, so the
+      // descriptor cache falls back to the plugin id for this fixture.
+      source: "dynamic-cache-test",
+      contractToolNames: ["dynamic_tool"],
+      ctx: context as never,
+    });
+    writeCachedPluginToolDescriptors({
+      cacheKey,
+      descriptors: [
+        capturePluginToolDescriptor({
+          pluginId: "dynamic-cache-test",
+          optional: true,
+          tool: {
+            ...makeDescriptorTool("dynamic_tool"),
+            description: "stale cached tool",
+            execute: staleExecute,
+          },
+        }),
+      ],
+      metadata: { version: 1, dynamicToolNames: ["dynamic_tool"] },
+    });
+    expect(readCachedPluginToolDescriptors(cacheKey)).toHaveLength(1);
+
+    const blockedByOptionalPolicy = resolvePluginTools(createResolveToolsParams({ context }));
+    expectResolvedToolNames(blockedByOptionalPolicy, []);
+    expect(factory).not.toHaveBeenCalled();
+
+    const visible = resolvePluginTools(
+      createResolveToolsParams({
+        context,
+        toolAllowlist: ["dynamic_tool"],
+      }),
+    );
+    expectResolvedToolNames(visible, ["dynamic_tool"]);
+    expect(visible[0]?.description).toBe("live dynamic tool");
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(factory).toHaveBeenLastCalledWith(context);
+    await expect(visible[0]?.execute("call", {}, undefined)).resolves.toEqual({
+      content: [{ type: "text", text: "live" }],
+    });
+    expect(staleExecute).not.toHaveBeenCalled();
+
+    available = false;
+    const hidden = resolvePluginTools(
+      createResolveToolsParams({
+        context,
+        toolAllowlist: ["dynamic_tool"],
+      }),
+    );
+    expectResolvedToolNames(hidden, []);
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(factory).toHaveBeenLastCalledWith(context);
+    expect(staleExecute).not.toHaveBeenCalled();
+  });
+
+  it("caches static tools while re-evaluating dynamic tools from the same plugin", () => {
+    let dynamicAvailable = true;
+    const staticFactory = vi.fn(() => makeTool("mixed_static_tool"));
+    const dynamicFactory = vi.fn(() => (dynamicAvailable ? makeTool("mixed_dynamic_tool") : null));
+    const registry = createToolRegistry([
+      {
+        pluginId: "mixed-cache-test",
+        optional: false,
+        source: "/tmp/mixed-cache-test.js",
+        names: ["mixed_static_tool"],
+        factory: staticFactory,
+      },
+      {
+        pluginId: "mixed-cache-test",
+        optional: true,
+        source: "/tmp/mixed-cache-test.js",
+        names: ["mixed_dynamic_tool"],
+        dynamicAvailability: true,
+        factory: dynamicFactory,
+      },
+    ]);
+    loadOpenClawPluginsMock.mockReturnValue(registry);
+    setActivePluginRegistry?.(
+      registry as never,
+      "mixed-cache-registry",
+      "gateway-bindable",
+      "/tmp",
+    );
+    const context = createContext();
+    installToolManifestSnapshot({
+      config: context.config,
+      plugin: {
+        id: "mixed-cache-test",
+        origin: "bundled",
+        enabledByDefault: true,
+        channels: [],
+        providers: [],
+        contracts: { tools: ["mixed_static_tool", "mixed_dynamic_tool"] },
+        toolMetadata: { mixed_dynamic_tool: { optional: true } },
+      },
+    });
+
+    const first = resolvePluginTools(
+      createResolveToolsParams({
+        context,
+        toolAllowlist: [DEFAULT_PLUGIN_TOOLS_ALLOWLIST_ENTRY, "mixed_dynamic_tool"],
+      }),
+    );
+    expectResolvedToolNames(first, ["mixed_static_tool", "mixed_dynamic_tool"]);
+    expect(staticFactory).toHaveBeenCalledTimes(1);
+    expect(dynamicFactory).toHaveBeenCalledTimes(1);
+
+    dynamicAvailable = false;
+    const second = resolvePluginTools(
+      createResolveToolsParams({
+        context,
+        toolAllowlist: [DEFAULT_PLUGIN_TOOLS_ALLOWLIST_ENTRY, "mixed_dynamic_tool"],
+      }),
+    );
+    expectResolvedToolNames(second, ["mixed_static_tool"]);
+    expect(staticFactory).toHaveBeenCalledTimes(1);
+    expect(dynamicFactory).toHaveBeenCalledTimes(2);
   });
 
   it("reuses cached plugin tool descriptors across session identity changes", async () => {

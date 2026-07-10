@@ -17,7 +17,9 @@ vi.mock("../config/runtime-snapshot.js", () => ({
 import {
   buildPluginToolDescriptorCacheKey,
   createPluginToolDescriptorConfigCacheKeyMemo,
+  readPluginToolDescriptorCacheMetadata,
   resetPluginToolDescriptorCache,
+  writeCachedPluginToolDescriptors,
 } from "./tool-descriptor-cache.js";
 
 describe("plugin tool descriptor cache keys", () => {
@@ -167,5 +169,20 @@ describe("plugin tool descriptor cache keys", () => {
     });
 
     expect(firstKey).toBe(secondKey);
+  });
+
+  it("rejects missing and obsolete availability metadata", () => {
+    writeCachedPluginToolDescriptors({
+      cacheKey: "missing-metadata",
+      descriptors: [],
+    });
+    writeCachedPluginToolDescriptors({
+      cacheKey: "obsolete-metadata",
+      descriptors: [],
+      metadata: { version: 0, dynamicToolNames: [] } as never,
+    });
+
+    expect(readPluginToolDescriptorCacheMetadata("missing-metadata")).toBeUndefined();
+    expect(readPluginToolDescriptorCacheMetadata("obsolete-metadata")).toBeUndefined();
   });
 });

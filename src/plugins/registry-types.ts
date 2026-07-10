@@ -75,6 +75,7 @@ export type PluginToolRegistration = {
   names: string[];
   declaredNames?: string[];
   optional: boolean;
+  dynamicAvailability: boolean;
   source: string;
   rootDir?: string;
 };

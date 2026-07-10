@@ -20,6 +20,41 @@ function createTestRegistry(runtime: PluginRuntime) {
 }
 
 describe("plugin registry runtime config scope", () => {
+  it("propagates dynamic tool availability registration", () => {
+    const pluginRegistry = createTestRegistry({} as PluginRuntime);
+    const record = createPluginRecord({
+      id: "dynamic-tool-owner",
+      source: "/plugins/dynamic-tool-owner/index.js",
+      origin: "global",
+      enabled: true,
+      configSchema: false,
+      contracts: { tools: ["dynamic_tool"] },
+    });
+
+    pluginRegistry.registerTool(
+      record,
+      () => ({
+        name: "dynamic_tool",
+        label: "Dynamic tool",
+        description: "Dynamic tool",
+        parameters: { type: "object", properties: {} },
+        async execute() {
+          return { content: [], details: {} };
+        },
+      }),
+      { name: "dynamic_tool", optional: true, dynamicAvailability: true },
+    );
+
+    expect(pluginRegistry.registry.tools).toEqual([
+      expect.objectContaining({
+        pluginId: "dynamic-tool-owner",
+        names: ["dynamic_tool"],
+        optional: true,
+        dynamicAvailability: true,
+      }),
+    ]);
+  });
+
   it("runs config helpers with the owning plugin scope", async () => {
     let currentScope = getPluginRuntimeGatewayRequestScope();
     let mutateScope = getPluginRuntimeGatewayRequestScope();

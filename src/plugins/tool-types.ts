@@ -58,6 +58,11 @@ export type OpenClawPluginToolOptions = {
   name?: string;
   names?: string[];
   optional?: boolean;
+  /**
+   * Re-evaluate this factory for every tool-resolution context. Dynamic tools
+   * are never served from captured descriptors.
+   */
+  dynamicAvailability?: boolean;
 };
 
 export type OpenClawPluginHookOptions = {

@@ -24,6 +24,7 @@ import {
   capturePluginToolDescriptor,
   createPluginToolDescriptorConfigCacheKeyMemo,
   readCachedPluginToolDescriptors,
+  readPluginToolDescriptorCacheMetadata,
   type CachedPluginToolDescriptor,
   type PluginToolDescriptorConfigCacheKeyMemo,
   writeCachedPluginToolDescriptors,
@@ -528,6 +529,34 @@ function cachedDescriptorsCoverToolNames(params: {
   return params.toolNames.every((name) => descriptorNames.has(normalizeToolName(name)));
 }
 
+function listPluginToolRegistrationNames(entry: PluginToolRegistration): readonly string[] {
+  return entry.names.length > 0 ? entry.names : (entry.declaredNames ?? []);
+}
+
+function collectDynamicPluginToolNames(registry: PluginRegistry): Map<string, Set<string> | null> {
+  const dynamicNamesByPluginId = new Map<string, Set<string> | null>();
+  for (const entry of registry.tools) {
+    if (!entry.dynamicAvailability) {
+      continue;
+    }
+    const names = listPluginToolRegistrationNames(entry);
+    if (names.length === 0) {
+      dynamicNamesByPluginId.set(entry.pluginId, null);
+      continue;
+    }
+    const dynamicNames = dynamicNamesByPluginId.get(entry.pluginId);
+    if (dynamicNames === null) {
+      continue;
+    }
+    const target = dynamicNames ?? new Set<string>();
+    for (const name of names) {
+      target.add(normalizeToolName(name));
+    }
+    dynamicNamesByPluginId.set(entry.pluginId, target);
+  }
+  return dynamicNamesByPluginId;
+}
+
 function createCachedDescriptorPluginTool(params: {
   descriptor: CachedPluginToolDescriptor;
   ctx: OpenClawPluginToolContext;
@@ -624,10 +653,19 @@ function resolveCachedPluginTools(params: {
   runtimeOptions: PluginLoadOptions["runtimeOptions"];
   currentRuntimeConfig?: PluginLoadOptions["config"] | null;
   configCacheKeyMemo: PluginToolDescriptorConfigCacheKeyMemo;
-}): { tools: AnyAgentTool[]; handledPluginIds: Set<string> } {
+  registry?: PluginRegistry;
+}): {
+  tools: AnyAgentTool[];
+  handledPluginIds: Set<string>;
+  cachedPluginIds: Set<string>;
+} {
   const tools: AnyAgentTool[] = [];
   const handledPluginIds = new Set<string>();
+  const cachedPluginIds = new Set<string>();
   const onlyPluginIdSet = new Set(params.onlyPluginIds);
+  const dynamicNamesByPluginId = params.registry
+    ? collectDynamicPluginToolNames(params.registry)
+    : undefined;
   for (const plugin of params.snapshot.plugins) {
     if (!onlyPluginIdSet.has(plugin.id)) {
       continue;
@@ -671,19 +709,33 @@ function resolveCachedPluginTools(params: {
     if (params.existingNormalized.has(normalizeToolName(plugin.id))) {
       continue;
     }
-    const cached = readCachedPluginToolDescriptors(
-      buildPluginDescriptorCacheKey({
-        plugin,
-        ctx: params.ctx,
-        currentRuntimeConfig: params.currentRuntimeConfig,
-        configCacheKeyMemo: params.configCacheKeyMemo,
-      }),
+    const cacheKey = buildPluginDescriptorCacheKey({
+      plugin,
+      ctx: params.ctx,
+      currentRuntimeConfig: params.currentRuntimeConfig,
+      configCacheKeyMemo: params.configCacheKeyMemo,
+    });
+    const cached = readCachedPluginToolDescriptors(cacheKey);
+    const cacheMetadata = readPluginToolDescriptorCacheMetadata(cacheKey);
+    if (!cached || !cacheMetadata) {
+      continue;
+    }
+    const dynamicToolNames = dynamicNamesByPluginId
+      ? dynamicNamesByPluginId.get(plugin.id)
+      : new Set(cacheMetadata.dynamicToolNames.map(normalizeToolName));
+    if (dynamicToolNames === null) {
+      continue;
+    }
+    const cacheableToolNames = availableToolNames.filter(
+      (name) => !dynamicToolNames?.has(normalizeToolName(name)),
+    );
+    const cacheableDescriptors = cached?.filter(
+      (entry) => !dynamicToolNames?.has(normalizeToolName(entry.descriptor.name)),
     );
     if (
-      !cached ||
       !cachedDescriptorsCoverToolNames({
-        descriptors: cached,
-        toolNames: availableToolNames,
+        descriptors: cacheableDescriptors ?? [],
+        toolNames: cacheableToolNames,
       })
     ) {
       continue;
@@ -691,7 +743,7 @@ function resolveCachedPluginTools(params: {
     const pluginTools: AnyAgentTool[] = [];
     let hasNameConflict = false;
     const localNormalizedNames = new Set<string>();
-    for (const cachedDescriptor of cached) {
+    for (const cachedDescriptor of cacheableDescriptors ?? []) {
       if (
         !cachedDescriptor.optional &&
         !availableToolNames.some(
@@ -745,9 +797,14 @@ function resolveCachedPluginTools(params: {
       params.existingNormalized.add(normalizeToolName(pluginTool.name));
       tools.push(pluginTool);
     }
-    handledPluginIds.add(plugin.id);
+    if (cacheableToolNames.length > 0) {
+      cachedPluginIds.add(plugin.id);
+    }
+    if (!dynamicToolNames || dynamicToolNames.size === 0) {
+      handledPluginIds.add(plugin.id);
+    }
   }
-  return { tools, handledPluginIds };
+  return { tools, handledPluginIds, cachedPluginIds };
 }
 
 function resolvePluginToolRegistry(params: {
@@ -790,6 +847,35 @@ function resolvePluginToolRegistry(params: {
     return standaloneRegistry;
   }
   return standaloneRegistry ?? channelRegistry ?? activeRegistry;
+}
+
+function resolveLoadedPluginToolRegistry(params: {
+  loadOptions: PluginLoadOptions;
+  onlyPluginIds?: readonly string[];
+}): PluginRegistry | undefined {
+  const lookup = {
+    env: params.loadOptions.env,
+    loadOptions: params.loadOptions,
+    workspaceDir: params.loadOptions.workspaceDir,
+    requiredPluginIds: params.onlyPluginIds,
+  };
+  const channelRegistry = getLoadedRuntimePluginRegistry({
+    ...lookup,
+    surface: "channel",
+  });
+  if (registryHasScopedPluginTools(channelRegistry, params.onlyPluginIds)) {
+    return channelRegistry;
+  }
+
+  const activeRegistry = getLoadedRuntimePluginRegistry({
+    env: lookup.env,
+    workspaceDir: lookup.workspaceDir,
+    requiredPluginIds: lookup.requiredPluginIds,
+    surface: "active",
+  });
+  return registryHasScopedPluginTools(activeRegistry, params.onlyPluginIds)
+    ? activeRegistry
+    : undefined;
 }
 
 function registryHasScopedPluginTools(
@@ -917,6 +1003,12 @@ export function resolvePluginTools(params: {
       currentRuntimeConfigForDescriptorCache = null;
     }
   }
+  const cachedRegistry = resolveLoadedPluginToolRegistry({
+    loadOptions: loadState.loadOptions,
+    onlyPluginIds,
+  });
+  // Versioned cache metadata identifies descriptors whose factories must be
+  // re-evaluated, so stale cache entries cannot bypass dynamic availability.
   const cached = resolveCachedPluginTools({
     snapshot,
     config: context.config,
@@ -933,6 +1025,7 @@ export function resolvePluginTools(params: {
     runtimeOptions,
     currentRuntimeConfig: currentRuntimeConfigForDescriptorCache,
     configCacheKeyMemo,
+    registry: cachedRegistry,
   });
   tools.push(...cached.tools);
   const runtimePluginIds = onlyPluginIds.filter(
@@ -1001,9 +1094,13 @@ export function resolvePluginTools(params: {
   const factoryTimings: PluginToolFactoryTiming[] = [];
   const capturedDescriptorsByPluginId = new Map<string, CachedPluginToolDescriptor[]>();
   const manifestPluginsById = new Map(snapshot.plugins.map((plugin) => [plugin.id, plugin]));
+  const dynamicToolNamesByPluginId = collectDynamicPluginToolNames(registry);
 
   for (const entry of registry.tools) {
     if (!scopedPluginIds.has(entry.pluginId)) {
+      continue;
+    }
+    if (cached.cachedPluginIds.has(entry.pluginId) && !entry.dynamicAvailability) {
       continue;
     }
     if (denylistBlocksPlugin({ pluginId: entry.pluginId, denylist })) {
@@ -1199,7 +1296,7 @@ export function resolvePluginTools(params: {
         pluginId: entry.pluginId,
         optional,
       });
-      if (manifestPlugin) {
+      if (manifestPlugin && !entry.dynamicAvailability) {
         const capturedDescriptors = capturedDescriptorsByPluginId.get(entry.pluginId) ?? [];
         capturedDescriptors.push(
           capturePluginToolDescriptor({
@@ -1232,10 +1329,18 @@ export function resolvePluginTools(params: {
           denylist,
         }),
     );
+    const dynamicToolNames = dynamicToolNamesByPluginId.get(pluginId);
+    if (dynamicToolNames === null) {
+      continue;
+    }
+    const cacheableToolNames = availableToolNames.filter(
+      (name) => !dynamicToolNames?.has(normalizeToolName(name)),
+    );
     if (
+      cacheableToolNames.length > 0 &&
       cachedDescriptorsCoverToolNames({
         descriptors,
-        toolNames: availableToolNames,
+        toolNames: cacheableToolNames,
       })
     ) {
       writeCachedPluginToolDescriptors({
@@ -1246,6 +1351,10 @@ export function resolvePluginTools(params: {
           configCacheKeyMemo,
         }),
         descriptors,
+        metadata: {
+          version: 1,
+          dynamicToolNames: [...(dynamicToolNames ?? [])].toSorted(),
+        },
       });
     }
   }

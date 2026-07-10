@@ -502,6 +502,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
           names: [tool.name],
           declaredNames: declaredToolNames,
           optional: false,
+          dynamicAvailability: false,
           source: record.source,
           rootDir: record.rootDir,
         });
