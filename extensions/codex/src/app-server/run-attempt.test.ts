@@ -1015,7 +1015,7 @@ describe("runCodexAppServerAttempt", () => {
     });
   });
 
-  it("continues an ordinary turn with interactive device MCP servers disabled when setup fails", async () => {
+  it("continues an ordinary turn without injecting device MCP config when setup fails", async () => {
     const harness = createStartedThreadHarness();
     const params = createParams(
       path.join(tempDir, "session.jsonl"),
@@ -1036,13 +1036,10 @@ describe("runCodexAppServerAttempt", () => {
     await expect(run).resolves.toMatchObject({ success: true });
 
     const threadStart = harness.requests.find((entry) => entry.method === "thread/start");
-    expect((threadStart?.params as { config?: unknown } | undefined)?.config).toMatchObject({
-      mcp_servers: {
-        node_repl: { enabled: false },
-        "computer-use": { enabled: false },
-        "event-stream": { enabled: false },
-      },
-    });
+    expect(
+      (threadStart?.params as { config?: { mcp_servers?: unknown } } | undefined)?.config
+        ?.mcp_servers,
+    ).toBeUndefined();
   });
 
   it("forces the message dynamic tool for message-tool-only source replies", () => {

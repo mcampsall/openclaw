@@ -1208,16 +1208,14 @@ export async function runCodexAppServerAttempt(
           );
           attemptedClient = startupClient;
           startupClientForCleanup = startupClient;
-          let interactiveDeviceToolsReady = false;
           if (interactiveDeviceToolsEnabled) {
             try {
-              const status = await ensureCodexComputerUse({
+              await ensureCodexComputerUse({
                 client: startupClient,
                 pluginConfig: options.pluginConfig,
                 timeoutMs: appServer.requestTimeoutMs,
                 signal: runAbortController.signal,
               });
-              interactiveDeviceToolsReady = status.ready;
             } catch (error) {
               if (runAbortController.signal.aborted) {
                 throw error;
@@ -1229,7 +1227,7 @@ export async function runCodexAppServerAttempt(
           }
           const threadConfig = mergeCodexThreadConfigs(
             bundleMcpThreadConfig?.configPatch as JsonObject | undefined,
-            buildCodexInteractiveDeviceToolsScopeConfig(interactiveDeviceToolsReady),
+            buildCodexInteractiveDeviceToolsScopeConfig(interactiveDeviceToolsEnabled),
           );
           const buildThreadLifecycleParams = () =>
             ({
