@@ -83,6 +83,7 @@ describe("mirrorCodexAppServerTranscript", () => {
 
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [userMessage, assistantMessage, toolResultMessage],
       idempotencyScope: "scope-1",
@@ -105,12 +106,69 @@ describe("mirrorCodexAppServerTranscript", () => {
     );
   });
 
+  it("binds a first-write transcript header to the supplied session id", async () => {
+    const sessionFile = await createTempSessionFile();
+    const sessionId = "registry-session-1";
+
+    await mirrorCodexAppServerTranscript({
+      sessionFile,
+      sessionId,
+      sessionKey: "agent:main:direct:test",
+      messages: [
+        makeAgentAssistantMessage({
+          content: [{ type: "text", text: "first mirror" }],
+          timestamp: Date.now(),
+        }),
+      ],
+      idempotencyScope: "scope-1",
+    });
+
+    const [header] = parseJsonLines<{ type?: string; id?: string }>(
+      await fs.readFile(sessionFile, "utf8"),
+    );
+    expect(header).toMatchObject({ type: "session", id: sessionId });
+  });
+
+  it("preserves an existing transcript header", async () => {
+    const sessionFile = await createTempSessionFile();
+    await fs.writeFile(
+      sessionFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "existing-session-id",
+        timestamp: new Date().toISOString(),
+        cwd: process.cwd(),
+      })}\n`,
+      "utf8",
+    );
+
+    await mirrorCodexAppServerTranscript({
+      sessionFile,
+      sessionId: "registry-session-1",
+      sessionKey: "agent:main:direct:test",
+      messages: [
+        makeAgentAssistantMessage({
+          content: [{ type: "text", text: "existing mirror" }],
+          timestamp: Date.now(),
+        }),
+      ],
+      idempotencyScope: "scope-1",
+    });
+
+    const [header] = parseJsonLines<{ type?: string; id?: string }>(
+      await fs.readFile(sessionFile, "utf8"),
+    );
+    expect(header).toMatchObject({ type: "session", id: "existing-session-id" });
+  });
+
   it("creates the transcript directory on first mirror", async () => {
     const root = await makeRoot("openclaw-codex-transcript-missing-dir-");
     const sessionFile = path.join(root, "nested", "sessions", "session.jsonl");
 
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [
         makeAgentAssistantMessage({
@@ -141,12 +199,14 @@ describe("mirrorCodexAppServerTranscript", () => {
 
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [...messages],
       idempotencyScope: "scope-1",
     });
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [...messages],
       idempotencyScope: "scope-1",
@@ -180,6 +240,7 @@ describe("mirrorCodexAppServerTranscript", () => {
 
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [sourceMessage],
       idempotencyScope: "scope-1",
@@ -216,6 +277,7 @@ describe("mirrorCodexAppServerTranscript", () => {
 
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [sourceMessage],
       idempotencyScope: "scope-1",
@@ -241,6 +303,7 @@ describe("mirrorCodexAppServerTranscript", () => {
 
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [
         makeAgentAssistantMessage({
@@ -278,6 +341,7 @@ describe("mirrorCodexAppServerTranscript", () => {
 
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [
         makeAgentAssistantMessage({
@@ -356,6 +420,7 @@ describe("mirrorCodexAppServerTranscript", () => {
 
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [userMessage, assistantMessage],
       idempotencyScope: "codex-app-server:thread-X",
@@ -369,6 +434,7 @@ describe("mirrorCodexAppServerTranscript", () => {
     );
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [userMessage, reasoningMessage, assistantMessage],
       idempotencyScope: "codex-app-server:thread-X",
@@ -417,12 +483,14 @@ describe("mirrorCodexAppServerTranscript", () => {
 
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [userTurn1, assistantTurn1],
       idempotencyScope: "codex-app-server:thread-X",
     });
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [userTurn2, assistantTurn2],
       idempotencyScope: "codex-app-server:thread-X",
@@ -460,6 +528,7 @@ describe("mirrorCodexAppServerTranscript", () => {
     );
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [userTurn1, assistantTurn1],
       idempotencyScope: "codex-app-server:thread-X",
@@ -483,6 +552,7 @@ describe("mirrorCodexAppServerTranscript", () => {
     // turn 1's entries (with their original identities preserved).
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [userTurn1, assistantTurn1, userTurn2, assistantTurn2],
       idempotencyScope: "codex-app-server:thread-X",
@@ -513,6 +583,7 @@ describe("mirrorCodexAppServerTranscript", () => {
 
     await mirrorCodexAppServerTranscript({
       sessionFile,
+      sessionId: "session-1",
       sessionKey: "session-1",
       messages: [userMessage, assistantMessage],
       idempotencyScope: "scope-1",

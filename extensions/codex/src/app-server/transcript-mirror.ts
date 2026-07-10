@@ -112,6 +112,7 @@ function buildMirrorDedupeIdentity(message: MirroredAgentMessage): string {
 
 export async function mirrorCodexAppServerTranscript(params: {
   sessionFile: string;
+  sessionId: string;
   sessionKey?: string;
   agentId?: string;
   messages: AgentMessage[];
@@ -162,6 +163,7 @@ export async function mirrorCodexAppServerTranscript(params: {
       ) as AgentMessage;
       await appendSessionTranscriptMessage({
         transcriptPath: params.sessionFile,
+        sessionId: params.sessionId,
         message: messageToAppend,
         config: params.config,
       });
