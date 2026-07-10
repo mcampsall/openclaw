@@ -103,6 +103,10 @@ const BASE_RELOAD_RULES: ReloadRule[] = [
   { prefix: "mcp", kind: "hot", actions: ["dispose-mcp-runtimes"] },
   { prefix: "plugins.load", kind: "restart" },
   { prefix: "plugins.installs", kind: "restart" },
+  // These built-in capabilities resolve current config at use time. Reloading
+  // the entire plugin registry here tears down unrelated long-lived services.
+  { prefix: "plugins.entries.codex.config.computerUse", kind: "none" },
+  { prefix: "plugins.entries.memory-core.config.dreaming.enabled", kind: "none" },
 ];
 
 const BASE_RELOAD_RULES_TAIL: ReloadRule[] = [

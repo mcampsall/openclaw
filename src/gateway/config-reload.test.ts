@@ -336,6 +336,21 @@ describe("buildGatewayReloadPlan", () => {
     expect(plan.hotReasons).toContain("plugins.entries.lossless-claw.config.mode");
   });
 
+  it("keeps dynamic built-in capability switches from reloading plugin services", () => {
+    const plan = buildGatewayReloadPlan([
+      "plugins.entries.codex.config.computerUse.enabled",
+      "plugins.entries.memory-core.config.dreaming.enabled",
+    ]);
+
+    expect(plan.restartGateway).toBe(false);
+    expect(plan.reloadPlugins).toBe(false);
+    expect(plan.disposeMcpRuntimes).toBe(false);
+    expect(plan.noopPaths).toEqual([
+      "plugins.entries.codex.config.computerUse.enabled",
+      "plugins.entries.memory-core.config.dreaming.enabled",
+    ]);
+  });
+
   it("lists plugin install metadata and whole-record paths structurally", () => {
     const prev = {
       plugins: {
