@@ -982,6 +982,38 @@ describe("runCodexAppServerAttempt", () => {
     expect(__testing.shouldEnableCodexAppServerNativeToolSurface(params)).toBe(false);
   });
 
+  it("scopes Computer Use to interactive top-level Codex runs", () => {
+    const workspaceDir = path.join(tempDir, "workspace");
+    const params = createParams(path.join(tempDir, "session.jsonl"), workspaceDir);
+
+    expect(__testing.shouldEnableCodexComputerUseForRun(params)).toBe(true);
+
+    params.trigger = "user";
+    expect(__testing.shouldEnableCodexComputerUseForRun(params)).toBe(true);
+
+    params.trigger = "manual";
+    expect(__testing.shouldEnableCodexComputerUseForRun(params)).toBe(true);
+
+    for (const trigger of ["cron", "heartbeat", "memory", "overflow"] as const) {
+      params.trigger = trigger;
+      expect(__testing.shouldEnableCodexComputerUseForRun(params)).toBe(false);
+    }
+
+    params.trigger = "user";
+    params.spawnedBy = "agent:main:parent";
+    expect(__testing.shouldEnableCodexComputerUseForRun(params)).toBe(false);
+  });
+
+  it("fails Computer Use MCP servers closed outside interactive runs", () => {
+    expect(__testing.buildCodexComputerUseScopeConfig(true)).toBeUndefined();
+    expect(__testing.buildCodexComputerUseScopeConfig(false)).toEqual({
+      mcp_servers: {
+        node_repl: { enabled: false },
+        "computer-use": { enabled: false },
+      },
+    });
+  });
+
   it("forces the message dynamic tool for message-tool-only source replies", () => {
     const workspaceDir = path.join(tempDir, "workspace");
     const params = createParams(path.join(tempDir, "session.jsonl"), workspaceDir);

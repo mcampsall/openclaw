@@ -882,6 +882,7 @@ export async function runCodexAppServerAttempt(
     toolsAllow: params.toolsAllow,
   });
   const nativeToolSurfaceEnabled = shouldEnableCodexAppServerNativeToolSurface(params);
+  const computerUseEnabled = shouldEnableCodexComputerUseForRun(params);
   for (const diagnostic of bundleMcpThreadConfig.diagnostics) {
     embeddedAgentLog.warn(`bundle-mcp: ${diagnostic.pluginId}: ${diagnostic.message}`);
   }
@@ -1158,6 +1159,7 @@ export async function runCodexAppServerAttempt(
         : undefined;
     const threadConfig = mergeCodexThreadConfigs(
       bundleMcpThreadConfig?.configPatch as JsonObject | undefined,
+      buildCodexComputerUseScopeConfig(computerUseEnabled),
     );
     const nativeToolSurfaceRestricted = !nativeToolSurfaceEnabled;
     const pluginThreadConfigRequired =
@@ -1210,12 +1212,14 @@ export async function runCodexAppServerAttempt(
           );
           attemptedClient = startupClient;
           startupClientForCleanup = startupClient;
-          await ensureCodexComputerUse({
-            client: startupClient,
-            pluginConfig: options.pluginConfig,
-            timeoutMs: appServer.requestTimeoutMs,
-            signal: runAbortController.signal,
-          });
+          if (computerUseEnabled) {
+            await ensureCodexComputerUse({
+              client: startupClient,
+              pluginConfig: options.pluginConfig,
+              timeoutMs: appServer.requestTimeoutMs,
+              signal: runAbortController.signal,
+            });
+          }
           const buildThreadLifecycleParams = () =>
             ({
               client: startupClient,
@@ -3167,6 +3171,33 @@ function shouldEnableCodexAppServerNativeToolSurface(params: EmbeddedRunAttemptP
   return hasWildcardCodexToolsAllow(toolsAllow);
 }
 
+function shouldEnableCodexComputerUseForRun(params: EmbeddedRunAttemptParams): boolean {
+  if (params.spawnedBy || isSubagentSessionKey(params.sessionKey)) {
+    return false;
+  }
+  switch (params.trigger) {
+    case "cron":
+    case "heartbeat":
+    case "memory":
+    case "overflow":
+      return false;
+    default:
+      return true;
+  }
+}
+
+function buildCodexComputerUseScopeConfig(enabled: boolean): JsonObject | undefined {
+  if (enabled) {
+    return undefined;
+  }
+  return {
+    mcp_servers: {
+      node_repl: { enabled: false },
+      "computer-use": { enabled: false },
+    },
+  };
+}
+
 function disableCodexPluginThreadConfig(pluginConfig?: unknown): CodexPluginConfig {
   const config = readCodexPluginConfig(pluginConfig);
   return {
@@ -4299,6 +4330,8 @@ export const __testing = {
   resolveCodexAppServerForOpenClawToolPolicy,
   resolveOpenClawCodingToolsSessionKeys,
   shouldEnableCodexAppServerNativeToolSurface,
+  shouldEnableCodexComputerUseForRun,
+  buildCodexComputerUseScopeConfig,
   shouldForceMessageTool,
   setOpenClawCodingToolsFactoryForTests(factory: OpenClawCodingToolsFactory): void {
     openClawCodingToolsFactoryForTests = factory;
