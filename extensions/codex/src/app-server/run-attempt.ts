@@ -882,7 +882,7 @@ export async function runCodexAppServerAttempt(
     toolsAllow: params.toolsAllow,
   });
   const nativeToolSurfaceEnabled = shouldEnableCodexAppServerNativeToolSurface(params);
-  const computerUseEnabled = shouldEnableCodexComputerUseForRun(params);
+  const interactiveDeviceToolsEnabled = shouldEnableCodexInteractiveDeviceToolsForRun(params);
   for (const diagnostic of bundleMcpThreadConfig.diagnostics) {
     embeddedAgentLog.warn(`bundle-mcp: ${diagnostic.pluginId}: ${diagnostic.message}`);
   }
@@ -1159,7 +1159,7 @@ export async function runCodexAppServerAttempt(
         : undefined;
     const threadConfig = mergeCodexThreadConfigs(
       bundleMcpThreadConfig?.configPatch as JsonObject | undefined,
-      buildCodexComputerUseScopeConfig(computerUseEnabled),
+      buildCodexInteractiveDeviceToolsScopeConfig(interactiveDeviceToolsEnabled),
     );
     const nativeToolSurfaceRestricted = !nativeToolSurfaceEnabled;
     const pluginThreadConfigRequired =
@@ -1212,7 +1212,7 @@ export async function runCodexAppServerAttempt(
           );
           attemptedClient = startupClient;
           startupClientForCleanup = startupClient;
-          if (computerUseEnabled) {
+          if (interactiveDeviceToolsEnabled) {
             await ensureCodexComputerUse({
               client: startupClient,
               pluginConfig: options.pluginConfig,
@@ -3171,7 +3171,7 @@ function shouldEnableCodexAppServerNativeToolSurface(params: EmbeddedRunAttemptP
   return hasWildcardCodexToolsAllow(toolsAllow);
 }
 
-function shouldEnableCodexComputerUseForRun(params: EmbeddedRunAttemptParams): boolean {
+function shouldEnableCodexInteractiveDeviceToolsForRun(params: EmbeddedRunAttemptParams): boolean {
   if (params.spawnedBy || isSubagentSessionKey(params.sessionKey)) {
     return false;
   }
@@ -3186,7 +3186,7 @@ function shouldEnableCodexComputerUseForRun(params: EmbeddedRunAttemptParams): b
   }
 }
 
-function buildCodexComputerUseScopeConfig(enabled: boolean): JsonObject | undefined {
+function buildCodexInteractiveDeviceToolsScopeConfig(enabled: boolean): JsonObject | undefined {
   if (enabled) {
     return undefined;
   }
@@ -3194,6 +3194,7 @@ function buildCodexComputerUseScopeConfig(enabled: boolean): JsonObject | undefi
     mcp_servers: {
       node_repl: { enabled: false },
       "computer-use": { enabled: false },
+      "event-stream": { enabled: false },
     },
   };
 }
@@ -4330,8 +4331,8 @@ export const __testing = {
   resolveCodexAppServerForOpenClawToolPolicy,
   resolveOpenClawCodingToolsSessionKeys,
   shouldEnableCodexAppServerNativeToolSurface,
-  shouldEnableCodexComputerUseForRun,
-  buildCodexComputerUseScopeConfig,
+  shouldEnableCodexInteractiveDeviceToolsForRun,
+  buildCodexInteractiveDeviceToolsScopeConfig,
   shouldForceMessageTool,
   setOpenClawCodingToolsFactoryForTests(factory: OpenClawCodingToolsFactory): void {
     openClawCodingToolsFactoryForTests = factory;

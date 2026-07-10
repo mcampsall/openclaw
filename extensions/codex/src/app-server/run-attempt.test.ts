@@ -982,34 +982,35 @@ describe("runCodexAppServerAttempt", () => {
     expect(__testing.shouldEnableCodexAppServerNativeToolSurface(params)).toBe(false);
   });
 
-  it("scopes Computer Use to interactive top-level Codex runs", () => {
+  it("scopes interactive device tools to top-level Codex runs", () => {
     const workspaceDir = path.join(tempDir, "workspace");
     const params = createParams(path.join(tempDir, "session.jsonl"), workspaceDir);
 
-    expect(__testing.shouldEnableCodexComputerUseForRun(params)).toBe(true);
+    expect(__testing.shouldEnableCodexInteractiveDeviceToolsForRun(params)).toBe(true);
 
     params.trigger = "user";
-    expect(__testing.shouldEnableCodexComputerUseForRun(params)).toBe(true);
+    expect(__testing.shouldEnableCodexInteractiveDeviceToolsForRun(params)).toBe(true);
 
     params.trigger = "manual";
-    expect(__testing.shouldEnableCodexComputerUseForRun(params)).toBe(true);
+    expect(__testing.shouldEnableCodexInteractiveDeviceToolsForRun(params)).toBe(true);
 
     for (const trigger of ["cron", "heartbeat", "memory", "overflow"] as const) {
       params.trigger = trigger;
-      expect(__testing.shouldEnableCodexComputerUseForRun(params)).toBe(false);
+      expect(__testing.shouldEnableCodexInteractiveDeviceToolsForRun(params)).toBe(false);
     }
 
     params.trigger = "user";
     params.spawnedBy = "agent:main:parent";
-    expect(__testing.shouldEnableCodexComputerUseForRun(params)).toBe(false);
+    expect(__testing.shouldEnableCodexInteractiveDeviceToolsForRun(params)).toBe(false);
   });
 
-  it("fails Computer Use MCP servers closed outside interactive runs", () => {
-    expect(__testing.buildCodexComputerUseScopeConfig(true)).toBeUndefined();
-    expect(__testing.buildCodexComputerUseScopeConfig(false)).toEqual({
+  it("fails interactive device MCP servers closed outside interactive runs", () => {
+    expect(__testing.buildCodexInteractiveDeviceToolsScopeConfig(true)).toBeUndefined();
+    expect(__testing.buildCodexInteractiveDeviceToolsScopeConfig(false)).toEqual({
       mcp_servers: {
         node_repl: { enabled: false },
         "computer-use": { enabled: false },
+        "event-stream": { enabled: false },
       },
     });
   });
