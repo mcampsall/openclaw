@@ -7,6 +7,7 @@ import {
 } from "../../scripts/lib/static-extension-assets.mjs";
 import {
   copyStaticExtensionAssets,
+  ensureOpenClawSelfLink,
   listStaticExtensionAssetOutputs,
   rewriteRootRuntimeImportsToStableAliases,
   runRuntimePostBuild,
@@ -32,6 +33,18 @@ async function expectPathMissing(targetPath: string): Promise<void> {
   }
   expect(Reflect.get(statError, "code")).toBe("ENOENT");
 }
+
+describe("runtime postbuild package resolution", () => {
+  it("creates an idempotent openclaw self link for package-local plugin imports", async () => {
+    const rootDir = createTempDir("openclaw-runtime-postbuild-self-link-");
+
+    const first = ensureOpenClawSelfLink({ rootDir });
+    const second = ensureOpenClawSelfLink({ rootDir });
+
+    expect(second).toBe(first);
+    await expect(fs.realpath(first)).resolves.toBe(await fs.realpath(rootDir));
+  });
+});
 
 describe("runtime postbuild static assets", () => {
   it("tracks plugin-owned static assets that release packaging must ship", () => {

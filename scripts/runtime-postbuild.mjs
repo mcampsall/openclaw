@@ -16,6 +16,30 @@ import { writeOfficialChannelCatalog } from "./write-official-channel-catalog.mj
 export { copyStaticExtensionAssets, listStaticExtensionAssetOutputs };
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+export function ensureOpenClawSelfLink(params = {}) {
+  const rootDir = path.resolve(params.rootDir ?? params.repoRoot ?? params.cwd ?? ROOT);
+  const nodeModulesDir = path.join(rootDir, "node_modules");
+  const linkPath = path.join(nodeModulesDir, "openclaw");
+  fs.mkdirSync(nodeModulesDir, { recursive: true });
+  try {
+    const existing = fs.lstatSync(linkPath);
+    if (!existing.isSymbolicLink()) {
+      throw new Error(`${linkPath} exists but is not a symbolic link`);
+    }
+    const resolvedTarget = fs.realpathSync(linkPath);
+    if (resolvedTarget !== fs.realpathSync(rootDir)) {
+      throw new Error(`${linkPath} points to ${resolvedTarget}, expected ${rootDir}`);
+    }
+    return linkPath;
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  fs.symlinkSync(process.platform === "win32" ? rootDir : "..", linkPath, "dir");
+  return linkPath;
+}
 const ROOT_RUNTIME_ALIAS_PATTERN = /^(?<base>.+\.(?:runtime|contract))-[A-Za-z0-9_-]+\.js$/u;
 const ROOT_STABLE_RUNTIME_ALIAS_PATTERN = /^.+\.(?:runtime|contract)\.js$/u;
 const ROOT_RUNTIME_IMPORT_SPECIFIER_PATTERN =
@@ -463,6 +487,7 @@ export function runRuntimePostBuild(params = {}) {
       }
     }
   };
+  runPhase("openclaw package self link", () => ensureOpenClawSelfLink(params));
   runPhase("plugin SDK root alias", () => copyPluginSdkRootAlias(params));
   runPhase("bundled plugin metadata", () => copyBundledPluginMetadata(params));
   runPhase("official channel catalog", () => writeOfficialChannelCatalog(params));

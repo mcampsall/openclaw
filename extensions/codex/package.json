@@ -18,6 +18,9 @@
     "@openclaw/plugin-sdk": "workspace:*",
     "openclaw": "workspace:*"
   },
+  "peerDependencies": {
+    "openclaw": ">=2026.5.18"
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
