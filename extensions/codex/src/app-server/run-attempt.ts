@@ -3205,9 +3205,6 @@ async function buildCodexInteractiveDeviceToolsScopeConfig(
   enabled: boolean,
   codexHome?: string,
 ): Promise<JsonObject | undefined> {
-  if (enabled) {
-    return undefined;
-  }
   const eventStream = codexHome
     ? await readPluginMcpServerConfig({
         codexHome,
@@ -3215,6 +3212,13 @@ async function buildCodexInteractiveDeviceToolsScopeConfig(
         serverName: "event-stream",
       })
     : undefined;
+  if (enabled) {
+    // Reapply the complete transport on interactive resumes so a sparse override persisted by an
+    // earlier restricted turn cannot leave the thread with an invalid event-stream definition.
+    return eventStream
+      ? { mcp_servers: { "event-stream": { ...eventStream, enabled: true } } }
+      : undefined;
+  }
   return {
     // If the plugin transport cannot be resolved, disable plugin loading for this restricted run
     // instead of emitting a transport-less server override or exposing a device MCP fail-open.

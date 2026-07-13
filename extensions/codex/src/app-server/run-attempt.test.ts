@@ -1015,7 +1015,7 @@ describe("runCodexAppServerAttempt", () => {
     expect(__testing.shouldEnableCodexInteractiveDeviceToolsForRun(params)).toBe(false);
   });
 
-  it("fails all interactive device MCP servers closed with complete transports", async () => {
+  it("scopes interactive device MCP servers with complete transports", async () => {
     const codexHome = path.join(tempDir, "codex-home");
     const pluginDir = path.join(
       codexHome,
@@ -1041,7 +1041,16 @@ describe("runCodexAppServerAttempt", () => {
 
     await expect(
       __testing.buildCodexInteractiveDeviceToolsScopeConfig(true, codexHome),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({
+      mcp_servers: {
+        "event-stream": {
+          command: "./Codex Computer Use.app/Contents/MacOS/SkyComputerUseClient",
+          args: ["event-stream", "mcp"],
+          cwd: pluginDir,
+          enabled: true,
+        },
+      },
+    });
     await expect(
       __testing.buildCodexInteractiveDeviceToolsScopeConfig(false, codexHome),
     ).resolves.toEqual({
