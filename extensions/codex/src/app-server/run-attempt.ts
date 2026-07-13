@@ -3199,11 +3199,12 @@ function buildCodexInteractiveDeviceToolsScopeConfig(enabled: boolean): JsonObje
   if (enabled) {
     return undefined;
   }
+  // event-stream is plugin-owned. A sparse per-thread override replaces its plugin-provided
+  // transport and makes Codex reject the entire config as an invalid transport.
   return {
     mcp_servers: {
       node_repl: { enabled: false },
       "computer-use": { enabled: false },
-      "event-stream": { enabled: false },
     },
   };
 }

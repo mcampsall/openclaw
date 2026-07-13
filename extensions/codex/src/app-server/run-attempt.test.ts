@@ -1004,15 +1004,19 @@ describe("runCodexAppServerAttempt", () => {
     expect(__testing.shouldEnableCodexInteractiveDeviceToolsForRun(params)).toBe(false);
   });
 
-  it("fails interactive device MCP servers closed outside interactive runs", () => {
+  it("fails configured interactive device MCP servers closed outside interactive runs", () => {
     expect(__testing.buildCodexInteractiveDeviceToolsScopeConfig(true)).toBeUndefined();
     expect(__testing.buildCodexInteractiveDeviceToolsScopeConfig(false)).toEqual({
       mcp_servers: {
         node_repl: { enabled: false },
         "computer-use": { enabled: false },
-        "event-stream": { enabled: false },
       },
     });
+  });
+
+  it("does not emit an incomplete override for the plugin-owned event-stream server", () => {
+    const config = __testing.buildCodexInteractiveDeviceToolsScopeConfig(false);
+    expect(config?.mcp_servers).not.toHaveProperty("event-stream");
   });
 
   it("continues an ordinary turn without injecting device MCP config when setup fails", async () => {
