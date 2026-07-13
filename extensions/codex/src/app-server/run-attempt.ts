@@ -1227,7 +1227,10 @@ export async function runCodexAppServerAttempt(
           }
           const threadConfig = mergeCodexThreadConfigs(
             bundleMcpThreadConfig?.configPatch as JsonObject | undefined,
-            buildCodexInteractiveDeviceToolsScopeConfig(interactiveDeviceToolsEnabled),
+            await buildCodexInteractiveDeviceToolsScopeConfig(
+              interactiveDeviceToolsEnabled,
+              appServer.start.env?.CODEX_HOME?.trim() || resolveCodexAppServerHomeDir(agentDir),
+            ),
           );
           const buildThreadLifecycleParams = () =>
             ({
@@ -3188,25 +3191,99 @@ function shouldEnableCodexInteractiveDeviceToolsForRun(params: EmbeddedRunAttemp
     case "cron":
     case "heartbeat":
     case "memory":
-    case "overflow":
       return false;
+    case "overflow": {
+      const sessionKey = params.sessionKey?.toLowerCase() ?? "";
+      return !sessionKey.includes(":heartbeat") && !sessionKey.includes(":cron:");
+    }
     default:
       return true;
   }
 }
 
-function buildCodexInteractiveDeviceToolsScopeConfig(enabled: boolean): JsonObject | undefined {
+async function buildCodexInteractiveDeviceToolsScopeConfig(
+  enabled: boolean,
+  codexHome?: string,
+): Promise<JsonObject | undefined> {
   if (enabled) {
     return undefined;
   }
-  // event-stream is plugin-owned. A sparse per-thread override replaces its plugin-provided
-  // transport and makes Codex reject the entire config as an invalid transport.
+  const eventStream = codexHome
+    ? await readPluginMcpServerConfig({
+        codexHome,
+        pluginName: "record-and-replay",
+        serverName: "event-stream",
+      })
+    : undefined;
   return {
+    // If the plugin transport cannot be resolved, disable plugin loading for this restricted run
+    // instead of emitting a transport-less server override or exposing a device MCP fail-open.
+    ...(eventStream ? {} : { features: { plugins: false } }),
     mcp_servers: {
       node_repl: { enabled: false },
       "computer-use": { enabled: false },
+      ...(eventStream ? { "event-stream": { ...eventStream, enabled: false } } : {}),
     },
   };
+}
+
+async function readPluginMcpServerConfig(params: {
+  codexHome: string;
+  pluginName: string;
+  serverName: string;
+}): Promise<JsonObject | undefined> {
+  const cacheRoot = path.join(params.codexHome, "plugins", "cache");
+  let marketplaces: Dirent[];
+  try {
+    marketplaces = await fs.readdir(cacheRoot, { withFileTypes: true });
+  } catch {
+    return undefined;
+  }
+  const marketplaceDirs = marketplaces
+    .filter((entry) => entry.isDirectory())
+    .toSorted((left, right) => {
+      if (left.name === "openai-bundled") {
+        return -1;
+      }
+      if (right.name === "openai-bundled") {
+        return 1;
+      }
+      return left.name.localeCompare(right.name);
+    });
+  for (const marketplace of marketplaceDirs) {
+    const pluginRoot = path.join(cacheRoot, marketplace.name, params.pluginName);
+    let versions: Dirent[];
+    try {
+      versions = await fs.readdir(pluginRoot, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const version of versions
+      .filter((entry) => entry.isDirectory())
+      .toSorted((left, right) =>
+        right.name.localeCompare(left.name, undefined, { numeric: true }),
+      )) {
+      const pluginDir = path.join(pluginRoot, version.name);
+      try {
+        const parsed = JSON.parse(await fs.readFile(path.join(pluginDir, ".mcp.json"), "utf8"));
+        if (!isJsonObject(parsed) || !isJsonObject(parsed.mcpServers)) {
+          continue;
+        }
+        const server = parsed.mcpServers[params.serverName];
+        if (!isJsonObject(server) || typeof server.command !== "string" || !server.command.trim()) {
+          continue;
+        }
+        const cwd = typeof server.cwd === "string" && server.cwd.trim() ? server.cwd : ".";
+        return {
+          ...server,
+          cwd: path.resolve(pluginDir, cwd),
+        };
+      } catch {
+        continue;
+      }
+    }
+  }
+  return undefined;
 }
 
 function disableCodexPluginThreadConfig(pluginConfig?: unknown): CodexPluginConfig {

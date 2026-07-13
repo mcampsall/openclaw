@@ -994,29 +994,83 @@ describe("runCodexAppServerAttempt", () => {
     params.trigger = "manual";
     expect(__testing.shouldEnableCodexInteractiveDeviceToolsForRun(params)).toBe(true);
 
-    for (const trigger of ["cron", "heartbeat", "memory", "overflow"] as const) {
+    for (const trigger of ["cron", "heartbeat", "memory"] as const) {
       params.trigger = trigger;
       expect(__testing.shouldEnableCodexInteractiveDeviceToolsForRun(params)).toBe(false);
     }
 
+    params.trigger = "overflow";
+    params.sessionKey = "agent:main:direct:michael";
+    expect(__testing.shouldEnableCodexInteractiveDeviceToolsForRun(params)).toBe(true);
+
+    params.sessionKey = "agent:main:explicit:heartbeat";
+    expect(__testing.shouldEnableCodexInteractiveDeviceToolsForRun(params)).toBe(false);
+
+    params.sessionKey = "agent:main:cron:job-1";
+    expect(__testing.shouldEnableCodexInteractiveDeviceToolsForRun(params)).toBe(false);
+
     params.trigger = "user";
+    params.sessionKey = "agent:main:direct:michael";
     params.spawnedBy = "agent:main:parent";
     expect(__testing.shouldEnableCodexInteractiveDeviceToolsForRun(params)).toBe(false);
   });
 
-  it("fails configured interactive device MCP servers closed outside interactive runs", () => {
-    expect(__testing.buildCodexInteractiveDeviceToolsScopeConfig(true)).toBeUndefined();
-    expect(__testing.buildCodexInteractiveDeviceToolsScopeConfig(false)).toEqual({
+  it("fails all interactive device MCP servers closed with complete transports", async () => {
+    const codexHome = path.join(tempDir, "codex-home");
+    const pluginDir = path.join(
+      codexHome,
+      "plugins",
+      "cache",
+      "openai-bundled",
+      "record-and-replay",
+      "1.0.1000366",
+    );
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.writeFile(
+      path.join(pluginDir, ".mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          "event-stream": {
+            command: "./Codex Computer Use.app/Contents/MacOS/SkyComputerUseClient",
+            args: ["event-stream", "mcp"],
+            cwd: ".",
+          },
+        },
+      }),
+    );
+
+    await expect(
+      __testing.buildCodexInteractiveDeviceToolsScopeConfig(true, codexHome),
+    ).resolves.toBeUndefined();
+    await expect(
+      __testing.buildCodexInteractiveDeviceToolsScopeConfig(false, codexHome),
+    ).resolves.toEqual({
+      mcp_servers: {
+        node_repl: { enabled: false },
+        "computer-use": { enabled: false },
+        "event-stream": {
+          command: "./Codex Computer Use.app/Contents/MacOS/SkyComputerUseClient",
+          args: ["event-stream", "mcp"],
+          cwd: pluginDir,
+          enabled: false,
+        },
+      },
+    });
+  });
+
+  it("disables plugins instead of emitting an incomplete event-stream override", async () => {
+    await expect(
+      __testing.buildCodexInteractiveDeviceToolsScopeConfig(
+        false,
+        path.join(tempDir, "missing-codex-home"),
+      ),
+    ).resolves.toEqual({
+      features: { plugins: false },
       mcp_servers: {
         node_repl: { enabled: false },
         "computer-use": { enabled: false },
       },
     });
-  });
-
-  it("does not emit an incomplete override for the plugin-owned event-stream server", () => {
-    const config = __testing.buildCodexInteractiveDeviceToolsScopeConfig(false);
-    expect(config?.mcp_servers).not.toHaveProperty("event-stream");
   });
 
   it("continues an ordinary turn without injecting device MCP config when setup fails", async () => {
