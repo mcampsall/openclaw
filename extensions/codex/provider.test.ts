@@ -17,6 +17,7 @@ function expectStaticFallbackCatalog(
   result: Awaited<ReturnType<typeof buildCodexProviderCatalog>>,
 ) {
   expect(result.provider.models.map((model) => model.id)).toEqual([
+    "gpt-5.6-sol",
     "gpt-5.5",
     "gpt-5.4-mini",
     "gpt-5.2",
@@ -271,20 +272,23 @@ describe("codex provider", () => {
     });
   });
 
-  it("keeps fallback Codex app-server models image-capable", () => {
-    const provider = buildCodexProvider();
+  it.each(["gpt-5.6-sol", "gpt-5.5"])(
+    "keeps fallback Codex app-server model %s image-capable",
+    (modelId) => {
+      const provider = buildCodexProvider();
 
-    const model = provider.resolveDynamicModel?.({
-      provider: "codex",
-      modelId: "gpt-5.5",
-      modelRegistry: { find: () => null },
-    } as never);
+      const model = provider.resolveDynamicModel?.({
+        provider: "codex",
+        modelId,
+        modelRegistry: { find: () => null },
+      } as never);
 
-    expectRecordFields(model, {
-      id: "gpt-5.5",
-      input: ["text", "image"],
-    });
-  });
+      expectRecordFields(model, {
+        id: modelId,
+        input: ["text", "image"],
+      });
+    },
+  );
 
   it("treats o4 ids as reasoning-capable Codex models", () => {
     const provider = buildCodexProvider();
@@ -333,7 +337,7 @@ describe("codex provider", () => {
     const authResult = await authChoice?.run({} as never);
     expectRecordFields(authResult, {
       profiles: [],
-      defaultModel: "codex/gpt-5.5",
+      defaultModel: "codex/gpt-5.6-sol",
     });
   });
 
@@ -353,7 +357,7 @@ describe("codex provider", () => {
 
     expect(
       result && "provider" in result ? result.provider.models.map((model) => model.id) : [],
-    ).toEqual(["gpt-5.5", "gpt-5.4-mini", "gpt-5.2"]);
+    ).toEqual(["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini", "gpt-5.2"]);
   });
 
   it("adds the GPT-5 prompt overlay to Codex provider runs", () => {

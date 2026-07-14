@@ -321,14 +321,14 @@ describe("Codex app-server model provider selection", () => {
 
 describe("resolveReasoningEffort (#71946)", () => {
   describe("modern Codex models (none/low/medium/high/xhigh enum)", () => {
-    it.each(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2"] as const)(
+    it.each(["gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2"] as const)(
       "translates 'minimal' -> 'low' for %s so the first request is accepted",
       (modelId) => {
         expect(resolveReasoningEffort("minimal", modelId)).toBe("low");
       },
     );
 
-    it.each(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2"] as const)(
+    it.each(["gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2"] as const)(
       "passes 'low' / 'medium' / 'high' / 'xhigh' through unchanged for %s",
       (modelId) => {
         expect(resolveReasoningEffort("low", modelId)).toBe("low");
@@ -339,7 +339,7 @@ describe("resolveReasoningEffort (#71946)", () => {
     );
 
     it("normalizes case-variant model ids", () => {
-      expect(resolveReasoningEffort("minimal", "GPT-5.5")).toBe("low");
+      expect(resolveReasoningEffort("minimal", "GPT-5.6-SOL")).toBe("low");
       expect(resolveReasoningEffort("minimal", " gpt-5.4-mini ")).toBe("low");
     });
   });
@@ -360,17 +360,17 @@ describe("resolveReasoningEffort (#71946)", () => {
 
   describe("non-effort thinkLevel values", () => {
     it("returns null for 'off'", () => {
-      expect(resolveReasoningEffort("off", "gpt-5.5")).toBeNull();
+      expect(resolveReasoningEffort("off", "gpt-5.6-sol")).toBeNull();
       expect(resolveReasoningEffort("off", "gpt-4o")).toBeNull();
     });
 
     it("returns null for 'adaptive' (non-effort enum value)", () => {
-      expect(resolveReasoningEffort("adaptive", "gpt-5.5")).toBeNull();
+      expect(resolveReasoningEffort("adaptive", "gpt-5.6-sol")).toBeNull();
       expect(resolveReasoningEffort("adaptive", "gpt-4o")).toBeNull();
     });
 
     it("returns null for 'max' (non-effort enum value)", () => {
-      expect(resolveReasoningEffort("max", "gpt-5.5")).toBeNull();
+      expect(resolveReasoningEffort("max", "gpt-5.6-sol")).toBeNull();
       expect(resolveReasoningEffort("max", "gpt-4o")).toBeNull();
     });
   });
