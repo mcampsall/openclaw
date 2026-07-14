@@ -26,6 +26,20 @@ function expectSchemaFailurePath(result: SchemaParseResult, expectedPathPrefix: 
 }
 
 describe("agent defaults schema", () => {
+  it("accepts per-agent CLI backend overrides", () => {
+    const agent = AgentEntrySchema.parse({
+      id: "work",
+      cliBackends: {
+        "claude-cli": {
+          command: "claude",
+          env: { CLAUDE_CONFIG_DIR: "/private/work/claude" },
+        },
+      },
+    });
+
+    expect(agent.cliBackends?.["claude-cli"]?.env?.CLAUDE_CONFIG_DIR).toBe("/private/work/claude");
+  });
+
   it("accepts subagent archiveAfterMinutes=0 to disable archiving", () => {
     expectSchemaSuccess(
       AgentDefaultsSchema.safeParse({

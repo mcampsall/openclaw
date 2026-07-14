@@ -3,6 +3,7 @@ import type {
   AgentContextLimitsConfig,
   AgentDefaultsConfig,
   AgentModelEntryConfig,
+  CliBackendConfig,
   EmbeddedPiExecutionContract,
   SubagentDelegationMode,
 } from "./types.agent-defaults.js";
@@ -92,6 +93,8 @@ export type AgentConfig = {
   model?: AgentModelConfig;
   /** Per-model metadata overrides for this agent. */
   models?: Record<string, AgentModelEntryConfig>;
+  /** Per-agent CLI backend overrides, deep-merged over agents.defaults.cliBackends. */
+  cliBackends?: Record<string, CliBackendConfig>;
   /** @deprecated Legacy per-agent compaction config is kept for raw doctor migration/repair. */
   compaction?: AgentDefaultsConfig["compaction"];
   /** Optional per-agent default thinking level (overrides agents.defaults.thinkingDefault). */

@@ -215,7 +215,15 @@ export function resolveCliBackendConfig(
   };
   const runtimeTextTransforms = resolveRuntimeTextTransforms();
   const configured = cfg?.agents?.defaults?.cliBackends ?? {};
-  const override = pickBackendConfig(configured, normalized);
+  const defaultOverride = pickBackendConfig(configured, normalized);
+  const agentConfigured = options.agentId
+    ? (cfg?.agents?.list?.find((agent) => agent.id === options.agentId)?.cliBackends ?? {})
+    : {};
+  const agentOverride = pickBackendConfig(agentConfigured, normalized);
+  const override =
+    defaultOverride && agentOverride
+      ? mergeBackendConfig(defaultOverride, agentOverride)
+      : (agentOverride ?? defaultOverride);
   const registered = resolveRegisteredBackend(normalized);
   if (registered) {
     const merged = mergeBackendConfig(registered.config, override);

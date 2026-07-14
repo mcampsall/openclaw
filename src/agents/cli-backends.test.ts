@@ -384,6 +384,51 @@ beforeEach(() => {
 });
 
 describe("resolveCliBackendConfig reliability merge", () => {
+  it("applies per-agent CLI backend overrides without changing other agents", () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          cliBackends: {
+            "claude-cli": {
+              command: "claude",
+              env: { SHARED_CLAUDE_SETTING: "shared" },
+              clearEnv: ["SHARED_CLEAR"],
+            },
+          },
+        },
+        list: [
+          {
+            id: "work",
+            cliBackends: {
+              "claude-cli": {
+                command: "claude",
+                env: { CLAUDE_CONFIG_DIR: "/private/work/claude" },
+                clearEnv: ["WORK_CLEAR"],
+              },
+            },
+          },
+          { id: "personal" },
+        ],
+      },
+    } satisfies OpenClawConfig;
+
+    const work = requireCliBackendConfig("claude-cli", cfg, { agentId: "work" });
+    const personal = requireCliBackendConfig("claude-cli", cfg, { agentId: "personal" });
+
+    expect(work.config.env).toEqual({
+      SHARED_CLAUDE_SETTING: "shared",
+      CLAUDE_CONFIG_DIR: "/private/work/claude",
+    });
+    expect(work.config.clearEnv).toEqual(
+      expect.arrayContaining(["CLAUDE_CONFIG_DIR", "SHARED_CLEAR", "WORK_CLEAR"]),
+    );
+    expect(work.id).toBe("claude-cli");
+    expect(work.bundleMcpMode).toBe("claude-config-file");
+    expect(personal.config.env).toEqual({ SHARED_CLAUDE_SETTING: "shared" });
+    expect(personal.config.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
+    expect(personal.config.clearEnv).not.toContain("WORK_CLEAR");
+  });
+
   it("defaults codex-cli fresh sandboxing and config-pinned resume sandboxing", () => {
     const resolved = requireCliBackendConfig("codex-cli");
 

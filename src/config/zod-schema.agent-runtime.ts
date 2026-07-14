@@ -9,6 +9,7 @@ import {
 } from "../shared/string-coerce.js";
 import { AgentModelSchema, AgentToolModelSchema } from "./zod-schema.agent-model.js";
 import {
+  CliBackendSchema,
   GroupChatSchema,
   HumanDelaySchema,
   IdentitySchema,
@@ -956,6 +957,7 @@ export const AgentEntrySchema = z
           .strict(),
       )
       .optional(),
+    cliBackends: z.record(z.string(), CliBackendSchema).optional(),
     thinkingDefault: z
       .enum(["off", "minimal", "low", "medium", "high", "xhigh", "adaptive", "max"])
       .optional(),
