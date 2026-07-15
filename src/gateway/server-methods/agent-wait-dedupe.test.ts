@@ -92,6 +92,52 @@ describe("agent wait dedupe helper", () => {
     });
   });
 
+  it("keeps a required-result wait pending until the linked final text arrives", async () => {
+    const dedupe = new Map();
+    const runId = "run-chat-result-race";
+    const wait = waitForTerminalGatewayDedupe({
+      dedupe,
+      runId,
+      timeoutMs: 1_000,
+      requireResult: true,
+    });
+
+    setRunEntry({
+      dedupe,
+      kind: "chat",
+      runId,
+      payload: { runId, status: "ok" },
+    });
+    await Promise.resolve();
+    expect(__testing.getWaiterCount(runId)).toBe(1);
+
+    setAgentWaitRunResult(runId, "late authoritative result");
+
+    await expect(wait).resolves.toMatchObject({
+      status: "ok",
+      result: { text: "late authoritative result" },
+    });
+  });
+
+  it("treats an explicitly finalized empty result as complete", () => {
+    const dedupe = new Map();
+    const runId = "run-chat-empty-result";
+    setRunEntry({
+      dedupe,
+      kind: "chat",
+      runId,
+      payload: { runId, status: "ok" },
+    });
+    setAgentWaitRunResult(runId, "");
+
+    expect(
+      readTerminalSnapshotFromGatewayDedupe({ dedupe, runId, requireResult: true }),
+    ).toMatchObject({
+      status: "ok",
+      result: { text: "" },
+    });
+  });
+
   it("waits for terminal dedupe without a duration timeout when timeoutMs is 0", async () => {
     const dedupe = new Map();
     const runId = "run-no-duration-timeout";

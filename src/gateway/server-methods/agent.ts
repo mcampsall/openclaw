@@ -1752,6 +1752,7 @@ export const agentHandlers: GatewayRequestHandlers = {
     }
     const p = params;
     const runId = (p.runId ?? "").trim();
+    const requireResult = p.requireResult === true;
     const timeoutMs =
       typeof p.timeoutMs === "number" && Number.isFinite(p.timeoutMs)
         ? Math.max(0, Math.floor(p.timeoutMs))
@@ -1765,7 +1766,8 @@ export const agentHandlers: GatewayRequestHandlers = {
     const cachedGatewaySnapshot = readTerminalSnapshotFromGatewayDedupe({
       dedupe: context.dedupe,
       runId,
-      ignoreAgentTerminalSnapshot: hasActiveChatRun,
+      ignoreAgentTerminalSnapshot: hasActiveChatRun || requireResult,
+      requireResult,
     });
     if (cachedGatewaySnapshot) {
       respond(true, {
@@ -1782,41 +1784,51 @@ export const agentHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    const lifecycleAbortController = new AbortController();
-    const dedupeAbortController = new AbortController();
-    const lifecyclePromise = waitForAgentJob({
-      runId,
-      timeoutMs,
-      signal: lifecycleAbortController.signal,
-      // When chat.send is active with the same runId, ignore cached lifecycle
-      // snapshots so stale agent results do not preempt the active chat run.
-      ignoreCachedSnapshot: hasActiveChatRun,
-    });
-    const dedupePromise = waitForTerminalGatewayDedupe({
-      dedupe: context.dedupe,
-      runId,
-      timeoutMs,
-      signal: dedupeAbortController.signal,
-      ignoreAgentTerminalSnapshot: hasActiveChatRun,
-    });
-
-    const first = await Promise.race([
-      lifecyclePromise.then((snapshot) => ({ source: "lifecycle" as const, snapshot })),
-      dedupePromise.then((snapshot) => ({ source: "dedupe" as const, snapshot })),
-    ]);
-
-    let snapshot: AgentWaitTerminalSnapshot | Awaited<ReturnType<typeof waitForAgentJob>> =
-      first.snapshot;
-    if (snapshot) {
-      if (first.source === "lifecycle") {
-        dedupeAbortController.abort();
-      } else {
-        lifecycleAbortController.abort();
-      }
+    let snapshot: AgentWaitTerminalSnapshot | Awaited<ReturnType<typeof waitForAgentJob>>;
+    if (requireResult) {
+      snapshot = await waitForTerminalGatewayDedupe({
+        dedupe: context.dedupe,
+        runId,
+        timeoutMs,
+        ignoreAgentTerminalSnapshot: true,
+        requireResult: true,
+      });
     } else {
-      snapshot = first.source === "lifecycle" ? await dedupePromise : await lifecyclePromise;
-      lifecycleAbortController.abort();
-      dedupeAbortController.abort();
+      const lifecycleAbortController = new AbortController();
+      const dedupeAbortController = new AbortController();
+      const lifecyclePromise = waitForAgentJob({
+        runId,
+        timeoutMs,
+        signal: lifecycleAbortController.signal,
+        // When chat.send is active with the same runId, ignore cached lifecycle
+        // snapshots so stale agent results do not preempt the active chat run.
+        ignoreCachedSnapshot: hasActiveChatRun,
+      });
+      const dedupePromise = waitForTerminalGatewayDedupe({
+        dedupe: context.dedupe,
+        runId,
+        timeoutMs,
+        signal: dedupeAbortController.signal,
+        ignoreAgentTerminalSnapshot: hasActiveChatRun,
+      });
+
+      const first = await Promise.race([
+        lifecyclePromise.then((value) => ({ source: "lifecycle" as const, value })),
+        dedupePromise.then((value) => ({ source: "dedupe" as const, value })),
+      ]);
+
+      snapshot = first.value;
+      if (snapshot) {
+        if (first.source === "lifecycle") {
+          dedupeAbortController.abort();
+        } else {
+          lifecycleAbortController.abort();
+        }
+      } else {
+        snapshot = first.source === "lifecycle" ? await dedupePromise : await lifecyclePromise;
+        lifecycleAbortController.abort();
+        dedupeAbortController.abort();
+      }
     }
 
     if (!snapshot) {
@@ -1829,6 +1841,24 @@ export const agentHandlers: GatewayRequestHandlers = {
           livenessState: "working",
         });
         return;
+      }
+      if (requireResult) {
+        const completedWithoutResult = readTerminalSnapshotFromGatewayDedupe({
+          dedupe: context.dedupe,
+          runId,
+          ignoreAgentTerminalSnapshot: true,
+        });
+        if (completedWithoutResult?.status === "ok") {
+          respond(true, {
+            runId,
+            status: "error",
+            startedAt: completedWithoutResult.startedAt,
+            endedAt: completedWithoutResult.endedAt,
+            error: "agent run completed without a finalized result",
+            stopReason: "required_result_missing",
+          });
+          return;
+        }
       }
       respond(true, {
         runId,

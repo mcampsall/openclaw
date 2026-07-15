@@ -16,7 +16,7 @@ import {
   resetTaskRegistryForTests,
 } from "../../tasks/task-registry.js";
 import { withTempDir } from "../../test-helpers/temp-dir.js";
-import { setGatewayDedupeEntry } from "./agent-wait-dedupe.js";
+import { setAgentWaitRunResult, setGatewayDedupeEntry } from "./agent-wait-dedupe.js";
 import { agentHandlers } from "./agent.js";
 import { chatHandlers } from "./chat.js";
 import { expectSubagentFollowupReactivation } from "./subagent-followup.test-helpers.js";
@@ -3903,6 +3903,47 @@ describe("gateway agent handler chat.abort integration", () => {
       livenessState: undefined,
       yielded: undefined,
       result: { text: "authoritative result" },
+    });
+  });
+
+  it("does not expose terminal ok before a required chat result is finalized", async () => {
+    const context = makeContext();
+    const runId = "chat-run-result-race";
+    setGatewayDedupeEntry({
+      dedupe: context.dedupe,
+      key: `chat:${runId}`,
+      entry: {
+        ts: 200,
+        ok: true,
+        payload: { runId, status: "ok", startedAt: 100, endedAt: 200 },
+      },
+    });
+    const respond = vi.fn();
+
+    const wait = agentHandlers["agent.wait"]({
+      params: { runId, timeoutMs: 100, requireResult: true },
+      respond,
+      context,
+      req: { type: "req", id: "wait-result-race", method: "agent.wait" },
+      client: null,
+      isWebchatConnect: () => false,
+    } as never);
+    await Promise.resolve();
+    expect(respond).not.toHaveBeenCalled();
+
+    setAgentWaitRunResult(runId, "finalized after lifecycle");
+    await wait;
+
+    expect(respond).toHaveBeenCalledWith(true, {
+      runId,
+      status: "ok",
+      startedAt: 100,
+      endedAt: 200,
+      error: undefined,
+      stopReason: undefined,
+      livenessState: undefined,
+      yielded: undefined,
+      result: { text: "finalized after lifecycle" },
     });
   });
 });

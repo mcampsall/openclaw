@@ -237,6 +237,7 @@ export const AgentWaitParamsSchema = Type.Object(
   {
     runId: NonEmptyString,
     timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    requireResult: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );

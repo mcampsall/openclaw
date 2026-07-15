@@ -21,17 +21,21 @@ const AGENT_WAIT_RESULT_LIMIT = 512;
 function attachRunResult(
   runId: string,
   snapshot: AgentWaitTerminalSnapshot | null,
+  requireResult = false,
 ): AgentWaitTerminalSnapshot | null {
   if (!snapshot || snapshot.result) {
     return snapshot;
   }
+  if (snapshot.status !== "ok") {
+    return snapshot;
+  }
   const stored = AGENT_WAIT_RESULTS_BY_RUN_ID.get(runId);
   if (!stored) {
-    return snapshot;
+    return requireResult ? null : snapshot;
   }
   if (Date.now() - stored.storedAt > AGENT_WAIT_RESULT_TTL_MS) {
     AGENT_WAIT_RESULTS_BY_RUN_ID.delete(runId);
-    return snapshot;
+    return requireResult ? null : snapshot;
   }
   return { ...snapshot, result: { text: stored.text } };
 }
@@ -39,7 +43,7 @@ function attachRunResult(
 export function setAgentWaitRunResult(runId: string, text: string): void {
   const normalizedRunId = runId.trim();
   const normalizedText = text.trim();
-  if (!normalizedRunId || !normalizedText) {
+  if (!normalizedRunId) {
     return;
   }
   AGENT_WAIT_RESULTS_BY_RUN_ID.delete(normalizedRunId);
@@ -184,13 +188,18 @@ export function readTerminalSnapshotFromGatewayDedupe(params: {
   dedupe: Map<string, DedupeEntry>;
   runId: string;
   ignoreAgentTerminalSnapshot?: boolean;
+  requireResult?: boolean;
 }): AgentWaitTerminalSnapshot | null {
   if (params.ignoreAgentTerminalSnapshot) {
     const chatEntry = params.dedupe.get(`chat:${params.runId}`);
     if (!chatEntry) {
       return null;
     }
-    return attachRunResult(params.runId, readTerminalSnapshotFromDedupeEntry(chatEntry));
+    return attachRunResult(
+      params.runId,
+      readTerminalSnapshotFromDedupeEntry(chatEntry),
+      params.requireResult,
+    );
   }
 
   const chatEntry = params.dedupe.get(`chat:${params.runId}`);
@@ -203,7 +212,7 @@ export function readTerminalSnapshotFromGatewayDedupe(params: {
       // If agent is still in-flight, only trust chat if it was written after
       // this agent entry (indicating a newer completed chat run reused runId).
       if (chatSnapshot && chatEntry && chatEntry.ts > agentEntry.ts) {
-        return attachRunResult(params.runId, chatSnapshot);
+        return attachRunResult(params.runId, chatSnapshot, params.requireResult);
       }
       return null;
     }
@@ -215,10 +224,11 @@ export function readTerminalSnapshotFromGatewayDedupe(params: {
     return attachRunResult(
       params.runId,
       chatEntry.ts > agentEntry.ts ? chatSnapshot : agentSnapshot,
+      params.requireResult,
     );
   }
 
-  return attachRunResult(params.runId, agentSnapshot ?? chatSnapshot);
+  return attachRunResult(params.runId, agentSnapshot ?? chatSnapshot, params.requireResult);
 }
 
 export async function waitForTerminalGatewayDedupe(params: {
@@ -227,6 +237,7 @@ export async function waitForTerminalGatewayDedupe(params: {
   timeoutMs: number;
   signal?: AbortSignal;
   ignoreAgentTerminalSnapshot?: boolean;
+  requireResult?: boolean;
 }): Promise<AgentWaitTerminalSnapshot | null> {
   const initial = readTerminalSnapshotFromGatewayDedupe(params);
   if (initial) {

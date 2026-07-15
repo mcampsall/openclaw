@@ -649,9 +649,11 @@ export function createAgentEventHandler({
             : undefined,
       };
       const resultText = stripInlineDirectiveTagsForDisplay(text).text.trim();
-      if (resultText && !shouldSuppressSilent && isLinkedChatRun) {
-        setAgentWaitRunResult(clientRunId, resultText);
-        onChatFinalResult?.({ runId: clientRunId, text: resultText });
+      if (isLinkedChatRun) {
+        setAgentWaitRunResult(clientRunId, shouldSuppressSilent ? "" : resultText);
+        if (resultText && !shouldSuppressSilent) {
+          onChatFinalResult?.({ runId: clientRunId, text: resultText });
+        }
       }
       broadcast("chat", payload);
       nodeSendToSession(sessionKey, "chat", payload);
