@@ -82,6 +82,7 @@ import {
   resolveCodexContextEngineProjectionReserveTokens,
 } from "./context-engine-projection.js";
 import {
+  CODEX_APP_SERVER_OWNED_DYNAMIC_TOOL_EXCLUDES,
   filterCodexDynamicTools,
   isForcedPrivateQaCodexRuntime,
   normalizeCodexDynamicToolName,
@@ -168,6 +169,13 @@ import { filterToolsForVisionInputs } from "./vision-tools.js";
 const CODEX_DYNAMIC_TOOL_TIMEOUT_MS = 30_000;
 const CODEX_DYNAMIC_TOOL_MAX_TIMEOUT_MS = 600_000;
 const CODEX_DYNAMIC_IMAGE_TOOL_TIMEOUT_MS = 60_000;
+const CODEX_NATIVE_POLICY_REQUIRED_DYNAMIC_TOOLS = [
+  "read",
+  "write",
+  "edit",
+  "exec",
+  "process",
+] as const;
 const CODEX_APP_SERVER_STARTUP_CONNECTION_CLOSE_MAX_ATTEMPTS = 3;
 const CODEX_APP_SERVER_STARTUP_TIMEOUT_FLOOR_MS = 100;
 const CODEX_APP_SERVER_INTERRUPT_TIMEOUT_MS = 5_000;
@@ -881,7 +889,6 @@ export async function runCodexAppServerAttempt(
     disableTools: params.disableTools,
     toolsAllow: params.toolsAllow,
   });
-  const nativeToolSurfaceEnabled = shouldEnableCodexAppServerNativeToolSurface(params);
   const interactiveDeviceToolsEnabled = shouldEnableCodexInteractiveDeviceToolsForRun(params);
   for (const diagnostic of bundleMcpThreadConfig.diagnostics) {
     embeddedAgentLog.warn(`bundle-mcp: ${diagnostic.pluginId}: ${diagnostic.message}`);
@@ -891,7 +898,7 @@ export async function runCodexAppServerAttempt(
     : undefined;
   const hookChannelId = resolveCodexAppServerHookChannelId(params, sandboxSessionKey);
   let yieldDetected = false;
-  const tools = await buildDynamicTools({
+  const { tools, nativeToolSurfaceEnabled } = await buildDynamicTools({
     params,
     resolvedWorkspace,
     effectiveWorkspace,
@@ -3056,7 +3063,10 @@ function resolveCodexAppServerHookChannelId(
 async function buildDynamicTools(input: DynamicToolBuildParams) {
   const { params } = input;
   if (params.disableTools || !supportsModelTools(params.model)) {
-    return [];
+    return {
+      tools: [],
+      nativeToolSurfaceEnabled: shouldEnableCodexAppServerNativeToolSurface(params),
+    };
   }
   const modelHasVision = params.model.input?.includes("image") ?? false;
   const agentDir = params.agentDir ?? resolveAgentDir(params.config ?? {}, input.sessionAgentId);
@@ -3134,16 +3144,15 @@ async function buildDynamicTools(input: DynamicToolBuildParams) {
       input.runAbortController.abort("sessions_yield");
     },
   });
-  const codexFilteredTools = filterCodexDynamicTools(allTools, input.pluginConfig);
-  const visionFilteredTools = filterToolsForVisionInputs(codexFilteredTools, {
+  const visionFilteredTools = filterToolsForVisionInputs(allTools, {
     modelHasVision,
     hasInboundImages: (params.images?.length ?? 0) > 0,
   });
   const toolsAllow = includeForcedMessageToolAllow(params.toolsAllow, params);
-  const filteredTools = filterCodexDynamicToolsForAllowlist(visionFilteredTools, toolsAllow);
-  return normalizeAgentRuntimeTools({
+  const allowlistedTools = filterCodexDynamicToolsForAllowlist(visionFilteredTools, toolsAllow);
+  const policyTools = normalizeAgentRuntimeTools({
     runtimePlan: params.runtimePlan,
-    tools: filteredTools,
+    tools: allowlistedTools,
     provider: params.provider,
     config: params.config,
     workspaceDir: input.effectiveWorkspace,
@@ -3152,6 +3161,39 @@ async function buildDynamicTools(input: DynamicToolBuildParams) {
     modelApi: params.model.api,
     model: params.model,
   });
+  const nativeToolSurfaceEnabled =
+    shouldEnableCodexAppServerNativeToolSurface(params) &&
+    preservesCodexNativeToolPolicy(allowlistedTools, policyTools);
+  return {
+    tools: filterCodexDynamicTools(policyTools, input.pluginConfig, process.env, {
+      nativeToolSurfaceEnabled,
+    }),
+    nativeToolSurfaceEnabled,
+  };
+}
+
+function preservesCodexNativeToolPolicy<T extends { name: string }>(
+  toolsBeforePolicy: T[],
+  toolsAfterPolicy: T[],
+): boolean {
+  const nativeToolNames = new Set<string>(CODEX_APP_SERVER_OWNED_DYNAMIC_TOOL_EXCLUDES);
+  const nativeToolsBeforePolicy = new Set(
+    toolsBeforePolicy
+      .map((tool) => normalizeCodexDynamicToolName(tool.name))
+      .filter((name) => nativeToolNames.has(name)),
+  );
+  if (nativeToolsBeforePolicy.size === 0) {
+    return true;
+  }
+  if (
+    !CODEX_NATIVE_POLICY_REQUIRED_DYNAMIC_TOOLS.every((name) => nativeToolsBeforePolicy.has(name))
+  ) {
+    return false;
+  }
+  const toolsAfterPolicyNames = new Set(
+    toolsAfterPolicy.map((tool) => normalizeCodexDynamicToolName(tool.name)),
+  );
+  return [...nativeToolsBeforePolicy].every((name) => toolsAfterPolicyNames.has(name));
 }
 
 function includeForcedMessageToolAllow(
@@ -4409,6 +4451,7 @@ export const __testing = {
   buildCodexNativeHookRelayId,
   filterCodexDynamicTools,
   buildDynamicTools,
+  preservesCodexNativeToolPolicy,
   filterCodexDynamicToolsForAllowlist,
   filterToolsForVisionInputs,
   hasWildcardCodexToolsAllow,

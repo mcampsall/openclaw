@@ -647,6 +647,23 @@ describe("runCodexAppServerAttempt", () => {
     ).toEqual(["message"]);
   });
 
+  it("preserves policy-allowed OpenClaw file tools when the native surface is disabled", () => {
+    const tools = ["read", "write", "apply_patch", "exec", "message", "custom_tool"].map(
+      (name) => ({ name }),
+    );
+
+    expect(
+      __testing
+        .filterCodexDynamicTools(
+          tools,
+          { codexDynamicToolsExclude: ["custom_tool"] },
+          {},
+          { nativeToolSurfaceEnabled: false },
+        )
+        .map((tool) => tool.name),
+    ).toEqual(["read", "write", "apply_patch", "exec", "message"]);
+  });
+
   it("exposes app-server-owned tools directly for forced private QA Codex runtime", () => {
     const tools = ["read", "write", "image_generate", "message"].map((name) => ({ name }));
     const privateQaCodexEnv = {
@@ -925,7 +942,7 @@ describe("runCodexAppServerAttempt", () => {
       return [createRuntimeDynamicTool("sessions_spawn")];
     });
 
-    const tools = await __testing.buildDynamicTools({
+    const { tools } = await __testing.buildDynamicTools({
       params,
       resolvedWorkspace: workspaceDir,
       effectiveWorkspace: workspaceDir,
@@ -941,6 +958,38 @@ describe("runCodexAppServerAttempt", () => {
     const factoryOption = factoryOptions[0] as { allowGatewaySubagentBinding?: unknown };
     expect(factoryOption.allowGatewaySubagentBinding).toBe(true);
     expect(tools.map((tool) => tool.name)).toEqual(["sessions_spawn"]);
+  });
+
+  it("disables native tools and preserves allowed dynamic tools when factory policy denies exec", async () => {
+    const sessionFile = path.join(tempDir, "session.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace");
+    const params = createParams(sessionFile, workspaceDir);
+    params.disableTools = false;
+    params.runtimePlan = createCodexRuntimePlanFixture();
+    __testing.setOpenClawCodingToolsFactoryForTests(() =>
+      ["read", "write", "edit", "process", "message"].map(createRuntimeDynamicTool),
+    );
+
+    const result = await __testing.buildDynamicTools({
+      params,
+      resolvedWorkspace: workspaceDir,
+      effectiveWorkspace: workspaceDir,
+      sandboxSessionKey: params.sessionKey!,
+      sandbox: null as never,
+      runAbortController: new AbortController(),
+      sessionAgentId: "main",
+      pluginConfig: {},
+      onYieldDetected: () => undefined,
+    });
+
+    expect(result.nativeToolSurfaceEnabled).toBe(false);
+    expect(result.tools.map((tool) => tool.name)).toEqual([
+      "read",
+      "write",
+      "edit",
+      "process",
+      "message",
+    ]);
   });
 
   it("normalizes Codex dynamic toolsAllow entries before filtering", () => {
@@ -1310,6 +1359,57 @@ describe("runCodexAppServerAttempt", () => {
       open_world_enabled: false,
     });
     expect(startParams?.config?.apps?.["google-calendar-app"]?.enabled).toBeUndefined();
+    expect(harness.requests.map((entry) => entry.method)).not.toContain("app/list");
+  });
+
+  it("disables Codex native tool surfaces when factory policy denies exec", async () => {
+    __testing.setOpenClawCodingToolsFactoryForTests(() =>
+      ["read", "write", "edit", "process", "message"].map(createRuntimeDynamicTool),
+    );
+    const harness = createStartedThreadHarness(async (method) => {
+      if (method === "app/list") {
+        throw new Error("app/list should not run when runtime policy disables native tools.");
+      }
+      return undefined;
+    });
+    const params = createParams(
+      path.join(tempDir, "session.jsonl"),
+      path.join(tempDir, "workspace"),
+    );
+    params.disableTools = false;
+    params.runtimePlan = createCodexRuntimePlanFixture();
+
+    const run = runCodexAppServerAttempt(params, {
+      pluginConfig: { appServer: { mode: "yolo" } },
+    });
+    await harness.waitForMethod("turn/start", 5_000);
+    await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+    await run;
+
+    const startRequest = harness.requests.find((entry) => entry.method === "thread/start");
+    const startParams = startRequest?.params as
+      | {
+          dynamicTools?: Array<{ name?: string }>;
+          environments?: unknown[];
+          config?: {
+            "features.code_mode"?: boolean;
+            "features.code_mode_only"?: boolean;
+            apps?: Record<string, { enabled?: boolean }>;
+          };
+        }
+      | undefined;
+
+    expect(startParams?.dynamicTools?.map((tool) => tool.name)).toEqual([
+      "read",
+      "write",
+      "edit",
+      "process",
+      "message",
+    ]);
+    expect(startParams?.environments).toEqual([]);
+    expect(startParams?.config?.["features.code_mode"]).toBe(false);
+    expect(startParams?.config?.["features.code_mode_only"]).toBe(false);
+    expect(startParams?.config?.apps?._default?.enabled).toBe(false);
     expect(harness.requests.map((entry) => entry.method)).not.toContain("app/list");
   });
 

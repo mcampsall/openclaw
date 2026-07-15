@@ -24,6 +24,10 @@ type CodexDynamicToolProfileEnv = {
   OPENCLAW_QA_FORCE_RUNTIME?: string;
 };
 
+type CodexDynamicToolFilterOptions = {
+  nativeToolSurfaceEnabled?: boolean;
+};
+
 export function normalizeCodexDynamicToolName(name: string): string {
   const normalized = name.trim().toLowerCase();
   return DYNAMIC_TOOL_NAME_ALIASES[normalized] ?? normalized;
@@ -51,9 +55,10 @@ export function filterCodexDynamicTools<T extends { name: string }>(
   tools: T[],
   config: Pick<CodexPluginConfig, "codexDynamicToolsExclude">,
   env: CodexDynamicToolProfileEnv = process.env,
+  options: CodexDynamicToolFilterOptions = {},
 ): T[] {
   const excludes = new Set<string>();
-  if (!isForcedPrivateQaCodexRuntime(env)) {
+  if (options.nativeToolSurfaceEnabled !== false && !isForcedPrivateQaCodexRuntime(env)) {
     for (const name of CODEX_APP_SERVER_OWNED_DYNAMIC_TOOL_EXCLUDES) {
       excludes.add(name);
     }
