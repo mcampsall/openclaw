@@ -33,7 +33,9 @@ type PendingApprovalLookupError =
     };
 
 type ApprovalTurnSourceFields = {
+  sessionKey?: string | null;
   turnSourceChannel?: string | null;
+  turnSourceTo?: string | null;
   turnSourceAccountId?: string | null;
 };
 
@@ -315,7 +317,9 @@ export async function handlePendingApprovalRequest<
     !hasApprovalClients &&
     !delivered &&
     hasApprovalTurnSourceRoute({
+      sessionKey: params.record.request.sessionKey,
       turnSourceChannel: params.record.request.turnSourceChannel,
+      turnSourceTo: params.record.request.turnSourceTo,
       turnSourceAccountId: params.record.request.turnSourceAccountId,
     });
 

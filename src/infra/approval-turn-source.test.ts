@@ -26,7 +26,9 @@ describe("hasApprovalTurnSourceRoute", () => {
 
     expect(
       hasApprovalTurnSourceRoute({
+        sessionKey: "agent:main:slack:work:direct:D123",
         turnSourceChannel: "slack",
+        turnSourceTo: "D123",
         turnSourceAccountId: "work",
       }),
     ).toBe(true);
@@ -39,10 +41,19 @@ describe("hasApprovalTurnSourceRoute", () => {
 
   it("returns false when the initiating surface is disabled or unsupported", () => {
     resolveExecApprovalInitiatingSurfaceStateMock.mockReturnValueOnce({ kind: "disabled" });
-    expect(hasApprovalTurnSourceRoute({ turnSourceChannel: "discord" })).toBe(false);
+    expect(
+      hasApprovalTurnSourceRoute({ turnSourceChannel: "discord", turnSourceTo: "channel:123" }),
+    ).toBe(false);
 
     resolveExecApprovalInitiatingSurfaceStateMock.mockReturnValueOnce({ kind: "unsupported" });
-    expect(hasApprovalTurnSourceRoute({ turnSourceChannel: "unknown-channel" })).toBe(false);
+    expect(
+      hasApprovalTurnSourceRoute({ turnSourceChannel: "unknown-channel", turnSourceTo: "123" }),
+    ).toBe(false);
+  });
+
+  it("returns false immediately when an external turn source has no reply target", () => {
+    expect(hasApprovalTurnSourceRoute({ turnSourceChannel: "telegram" })).toBe(false);
+    expect(resolveExecApprovalInitiatingSurfaceStateMock).not.toHaveBeenCalled();
   });
 
   it("returns false when there is no turn-source channel", () => {

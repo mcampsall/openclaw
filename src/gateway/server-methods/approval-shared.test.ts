@@ -277,6 +277,56 @@ describe("handlePendingApprovalRequest", () => {
     await requestPromise;
   });
 
+  it("fast-fails a chat approval when the originating turn has no reply target", async () => {
+    hasApprovalTurnSourceRouteMock.mockReturnValueOnce(false);
+    const manager = new ExecApprovalManager();
+    const record = manager.create(
+      {
+        command: "change workout state",
+        sessionKey: "agent:workout:telegram:workout:direct:michael",
+        turnSourceChannel: "telegram",
+        turnSourceAccountId: "workout",
+      },
+      120_000,
+      "approval-chat-missing-target",
+    );
+    const decisionPromise = manager.register(record, 120_000);
+    const respond = vi.fn();
+
+    await handlePendingApprovalRequest({
+      manager,
+      record,
+      decisionPromise,
+      respond,
+      context: {
+        broadcast: vi.fn(),
+        hasExecApprovalClients: () => false,
+      } as unknown as GatewayRequestContext,
+      requestEventName: "plugin.approval.requested",
+      requestEvent: {
+        id: record.id,
+        request: record.request,
+        createdAtMs: record.createdAtMs,
+        expiresAtMs: record.expiresAtMs,
+      },
+      twoPhase: true,
+      deliverRequest: () => false,
+    });
+
+    expect(hasApprovalTurnSourceRouteMock).toHaveBeenCalledWith({
+      sessionKey: "agent:workout:telegram:workout:direct:michael",
+      turnSourceChannel: "telegram",
+      turnSourceTo: undefined,
+      turnSourceAccountId: "workout",
+    });
+    expect(manager.getSnapshot(record.id)?.resolvedBy).toBe("no-approval-route");
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({ id: record.id, decision: null }),
+      undefined,
+    );
+  });
+
   it("targets requested approval events to visible approval clients when available", async () => {
     const manager = new ExecApprovalManager();
     const record = manager.create(
