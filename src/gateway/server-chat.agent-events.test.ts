@@ -78,6 +78,7 @@ describe("agent event handler", () => {
     resolveSessionKeyForRun?: (runId: string) => string | undefined;
     lifecycleErrorRetryGraceMs?: number;
     isChatSendRunActive?: (runId: string) => boolean;
+    onChatFinalResult?: (result: { runId: string; text: string }) => void;
   }) {
     const nowSpy =
       params?.now === undefined ? undefined : vi.spyOn(Date, "now").mockReturnValue(params.now);
@@ -103,6 +104,7 @@ describe("agent event handler", () => {
       loadGatewaySessionRowForSnapshot: loadGatewaySessionRow,
       lifecycleErrorRetryGraceMs: params?.lifecycleErrorRetryGraceMs,
       isChatSendRunActive: params?.isChatSendRunActive,
+      onChatFinalResult: params?.onChatFinalResult,
     });
 
     return {
@@ -482,6 +484,42 @@ describe("agent event handler", () => {
     expect((agentCalls[2]?.[1] as { data?: { phase?: string } }).data?.phase).toBe("end");
     expect(sessionAgentCalls(nodeSendToSession)).toHaveLength(3);
     nowSpy.mockRestore();
+  });
+
+  it("binds sanitized final assistant text to the active chat run id", () => {
+    const onChatFinalResult = vi.fn();
+    const { chatRunState, handler } = createHarness({
+      isChatSendRunActive: (runId) => runId === "client-run-result",
+      onChatFinalResult,
+    });
+    chatRunState.registry.add("source-run-result", {
+      sessionKey: "session-result",
+      clientRunId: "client-run-result",
+    });
+
+    handler({
+      runId: "source-run-result",
+      seq: 1,
+      stream: "assistant",
+      ts: Date.now(),
+      data: {
+        text: "[[reply_to:client-run-result]]\nauthoritative answer",
+        delta: "authoritative answer",
+      },
+    });
+    handler({
+      runId: "source-run-result",
+      seq: 2,
+      stream: "lifecycle",
+      ts: Date.now(),
+      data: { phase: "end" },
+    });
+
+    expect(onChatFinalResult).toHaveBeenCalledOnce();
+    expect(onChatFinalResult).toHaveBeenCalledWith({
+      runId: "client-run-result",
+      text: "authoritative answer",
+    });
   });
 
   it("flushes pending assistant agent deltas before post-window text", () => {

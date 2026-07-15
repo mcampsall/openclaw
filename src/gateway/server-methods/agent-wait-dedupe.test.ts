@@ -3,6 +3,7 @@ import type { DedupeEntry } from "../server-shared.js";
 import {
   __testing,
   readTerminalSnapshotFromGatewayDedupe,
+  setAgentWaitRunResult,
   setGatewayDedupeEntry,
   waitForTerminalGatewayDedupe,
 } from "./agent-wait-dedupe.js";
@@ -29,11 +30,13 @@ describe("agent wait dedupe helper", () => {
 
   beforeEach(() => {
     __testing.resetWaiters();
+    __testing.clearRunResults();
     vi.useFakeTimers();
   });
 
   afterEach(() => {
     __testing.resetWaiters();
+    __testing.clearRunResults();
     vi.useRealTimers();
   });
 
@@ -58,6 +61,7 @@ describe("agent wait dedupe helper", () => {
         status: "ok",
         startedAt: 100,
         endedAt: 200,
+        result: { text: "answer for this run" },
       },
     });
 
@@ -66,8 +70,26 @@ describe("agent wait dedupe helper", () => {
       startedAt: 100,
       endedAt: 200,
       error: undefined,
+      result: { text: "answer for this run" },
     });
     expect(__testing.getWaiterCount(runId)).toBe(0);
+  });
+
+  it("attaches exact final text recorded from the linked chat run", () => {
+    const dedupe = new Map();
+    const runId = "run-chat-exact-result";
+    setRunEntry({
+      dedupe,
+      kind: "chat",
+      runId,
+      payload: { runId, status: "ok" },
+    });
+    setAgentWaitRunResult(runId, "authoritative linked result");
+
+    expect(readTerminalSnapshotFromGatewayDedupe({ dedupe, runId })).toMatchObject({
+      status: "ok",
+      result: { text: "authoritative linked result" },
+    });
   });
 
   it("waits for terminal dedupe without a duration timeout when timeoutMs is 0", async () => {

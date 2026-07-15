@@ -3863,4 +3863,46 @@ describe("gateway agent handler chat.abort integration", () => {
       livenessState: "working",
     });
   });
+
+  it("returns the assistant result bound to the completed chat run id", async () => {
+    const context = makeContext();
+    const runId = "chat-run-with-result";
+    setGatewayDedupeEntry({
+      dedupe: context.dedupe,
+      key: `chat:${runId}`,
+      entry: {
+        ts: 200,
+        ok: true,
+        payload: {
+          runId,
+          status: "ok",
+          startedAt: 100,
+          endedAt: 200,
+          result: { text: "authoritative result" },
+        },
+      },
+    });
+    const respond = vi.fn();
+
+    await agentHandlers["agent.wait"]({
+      params: { runId, timeoutMs: 1 },
+      respond,
+      context,
+      req: { type: "req", id: "wait-result", method: "agent.wait" },
+      client: null,
+      isWebchatConnect: () => false,
+    } as never);
+
+    expect(respond).toHaveBeenCalledWith(true, {
+      runId,
+      status: "ok",
+      startedAt: 100,
+      endedAt: 200,
+      error: undefined,
+      stopReason: undefined,
+      livenessState: undefined,
+      yielded: undefined,
+      result: { text: "authoritative result" },
+    });
+  });
 });

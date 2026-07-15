@@ -1777,6 +1777,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         stopReason: cachedGatewaySnapshot.stopReason,
         livenessState: cachedGatewaySnapshot.livenessState,
         yielded: cachedGatewaySnapshot.yielded,
+        ...(cachedGatewaySnapshot.result ? { result: cachedGatewaySnapshot.result } : {}),
       });
       return;
     }
@@ -1844,6 +1845,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       stopReason: snapshot.stopReason,
       livenessState: snapshot.livenessState,
       yielded: snapshot.yielded,
+      ...(snapshot.result ? { result: snapshot.result } : {}),
     });
   },
 };

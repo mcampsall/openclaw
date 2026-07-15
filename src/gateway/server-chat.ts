@@ -6,6 +6,7 @@ import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-event
 import { detectErrorKind, type ErrorKind } from "../infra/errors.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
 import { isAcpSessionKey, isSubagentSessionKey } from "../sessions/session-key-utils.js";
+import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
 import { setSafeTimeout } from "../utils/timer-delay.js";
 import {
   normalizeLiveAssistantEventText,
@@ -21,6 +22,7 @@ import type {
 } from "./server-chat-state.js";
 import { loadGatewaySessionRow } from "./server-chat.load-gateway-session-row.runtime.js";
 import { persistGatewaySessionLifecycleEvent } from "./server-chat.persist-session-lifecycle.runtime.js";
+import { setAgentWaitRunResult } from "./server-methods/agent-wait-dedupe.js";
 import { deriveGatewaySessionLifecycleSnapshot } from "./session-lifecycle-state.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
@@ -213,6 +215,7 @@ export type AgentEventHandlerOptions = {
   loadGatewaySessionRowForSnapshot?: typeof loadGatewaySessionRow;
   lifecycleErrorRetryGraceMs?: number;
   isChatSendRunActive?: (runId: string) => boolean;
+  onChatFinalResult?: (result: { runId: string; text: string }) => void;
 };
 
 export function createAgentEventHandler({
@@ -228,6 +231,7 @@ export function createAgentEventHandler({
   loadGatewaySessionRowForSnapshot = loadGatewaySessionRow,
   lifecycleErrorRetryGraceMs = AGENT_LIFECYCLE_ERROR_RETRY_GRACE_MS,
   isChatSendRunActive = () => false,
+  onChatFinalResult,
 }: AgentEventHandlerOptions) {
   const pendingTerminalLifecycleErrors = new Map<string, NodeJS.Timeout>();
 
@@ -407,6 +411,7 @@ export function createAgentEventHandler({
               evt.data?.error,
               evtStopReason,
               evtErrorKind,
+              true,
             );
           }
         } else if (!(opts?.skipChatErrorFinal && lifecyclePhase === "error")) {
@@ -419,6 +424,7 @@ export function createAgentEventHandler({
             evt.data?.error,
             evtStopReason,
             evtErrorKind,
+            false,
           );
         }
       } else {
@@ -608,6 +614,7 @@ export function createAgentEventHandler({
     error?: unknown,
     stopReason?: string,
     errorKind?: ErrorKind,
+    isLinkedChatRun = false,
   ) => {
     const { text, shouldSuppressSilent } = resolveBufferedChatTextState(clientRunId, sourceRunId, {
       suppressLeadFragments: false,
@@ -641,6 +648,11 @@ export function createAgentEventHandler({
               }
             : undefined,
       };
+      const resultText = stripInlineDirectiveTagsForDisplay(text).text.trim();
+      if (resultText && !shouldSuppressSilent && isLinkedChatRun) {
+        setAgentWaitRunResult(clientRunId, resultText);
+        onChatFinalResult?.({ runId: clientRunId, text: resultText });
+      }
       broadcast("chat", payload);
       nodeSendToSession(sessionKey, "chat", payload);
       return;

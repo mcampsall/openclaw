@@ -2884,13 +2884,32 @@ export const chatHandlers: GatewayRequestHandlers = {
                 });
               }
               if (!context.chatAbortedRuns.has(clientRunId)) {
+                const finalResultText = sanitizeAssistantDisplayText(
+                  buildTranscriptReplyText(
+                    deliveredReplies
+                      .filter((entry) => entry.kind === "final")
+                      .map((entry) => entry.payload),
+                  ),
+                );
+                const existingPayload = context.dedupe.get(`chat:${clientRunId}`)?.payload as
+                  | { result?: { text?: unknown } }
+                  | undefined;
+                const eventResultText =
+                  typeof existingPayload?.result?.text === "string"
+                    ? existingPayload.result.text.trim()
+                    : "";
+                const runResultText = eventResultText || finalResultText;
                 setGatewayDedupeEntry({
                   dedupe: context.dedupe,
                   key: `chat:${clientRunId}`,
                   entry: {
                     ts: Date.now(),
                     ok: true,
-                    payload: { runId: clientRunId, status: "ok" as const },
+                    payload: {
+                      runId: clientRunId,
+                      status: "ok" as const,
+                      ...(runResultText ? { result: { text: runResultText } } : {}),
+                    },
                   },
                 });
               }

@@ -10,9 +10,52 @@ export type AgentWaitTerminalSnapshot = {
   stopReason?: string;
   livenessState?: string;
   yielded?: boolean;
+  result?: { text: string };
 };
 
 const AGENT_WAITERS_BY_RUN_ID = new Map<string, Set<() => void>>();
+const AGENT_WAIT_RESULTS_BY_RUN_ID = new Map<string, { text: string; storedAt: number }>();
+const AGENT_WAIT_RESULT_TTL_MS = 60 * 60 * 1_000;
+const AGENT_WAIT_RESULT_LIMIT = 512;
+
+function attachRunResult(
+  runId: string,
+  snapshot: AgentWaitTerminalSnapshot | null,
+): AgentWaitTerminalSnapshot | null {
+  if (!snapshot || snapshot.result) {
+    return snapshot;
+  }
+  const stored = AGENT_WAIT_RESULTS_BY_RUN_ID.get(runId);
+  if (!stored) {
+    return snapshot;
+  }
+  if (Date.now() - stored.storedAt > AGENT_WAIT_RESULT_TTL_MS) {
+    AGENT_WAIT_RESULTS_BY_RUN_ID.delete(runId);
+    return snapshot;
+  }
+  return { ...snapshot, result: { text: stored.text } };
+}
+
+export function setAgentWaitRunResult(runId: string, text: string): void {
+  const normalizedRunId = runId.trim();
+  const normalizedText = text.trim();
+  if (!normalizedRunId || !normalizedText) {
+    return;
+  }
+  AGENT_WAIT_RESULTS_BY_RUN_ID.delete(normalizedRunId);
+  AGENT_WAIT_RESULTS_BY_RUN_ID.set(normalizedRunId, {
+    text: normalizedText,
+    storedAt: Date.now(),
+  });
+  while (AGENT_WAIT_RESULTS_BY_RUN_ID.size > AGENT_WAIT_RESULT_LIMIT) {
+    const oldest = AGENT_WAIT_RESULTS_BY_RUN_ID.keys().next().value;
+    if (typeof oldest !== "string") {
+      break;
+    }
+    AGENT_WAIT_RESULTS_BY_RUN_ID.delete(oldest);
+  }
+  notifyWaiters(normalizedRunId);
+}
 
 function parseRunIdFromDedupeKey(key: string): string | null {
   if (key.startsWith("agent:")) {
@@ -99,6 +142,7 @@ function readTerminalSnapshotFromDedupeEntry(entry: DedupeEntry): AgentWaitTermi
   const startedAt = asFiniteNumber(payload?.startedAt);
   const endedAt = asFiniteNumber(payload?.endedAt) ?? entry.ts;
   const resultMeta = asRecord(asRecord(payload?.result)?.meta);
+  const resultText = asString(asRecord(payload?.result)?.text);
   const stopReason = asString(payload?.stopReason) ?? asString(resultMeta?.stopReason);
   const livenessState = asString(payload?.livenessState) ?? asString(resultMeta?.livenessState);
   const yielded = payload?.yielded === true || resultMeta?.yielded === true;
@@ -118,6 +162,7 @@ function readTerminalSnapshotFromDedupeEntry(entry: DedupeEntry): AgentWaitTermi
       stopReason,
       livenessState,
       ...(yielded ? { yielded } : {}),
+      ...(resultText ? { result: { text: resultText } } : {}),
     };
   }
   if (status === "error" || !entry.ok) {
@@ -129,6 +174,7 @@ function readTerminalSnapshotFromDedupeEntry(entry: DedupeEntry): AgentWaitTermi
       stopReason,
       livenessState,
       ...(yielded ? { yielded } : {}),
+      ...(resultText ? { result: { text: resultText } } : {}),
     };
   }
   return null;
@@ -144,7 +190,7 @@ export function readTerminalSnapshotFromGatewayDedupe(params: {
     if (!chatEntry) {
       return null;
     }
-    return readTerminalSnapshotFromDedupeEntry(chatEntry);
+    return attachRunResult(params.runId, readTerminalSnapshotFromDedupeEntry(chatEntry));
   }
 
   const chatEntry = params.dedupe.get(`chat:${params.runId}`);
@@ -157,7 +203,7 @@ export function readTerminalSnapshotFromGatewayDedupe(params: {
       // If agent is still in-flight, only trust chat if it was written after
       // this agent entry (indicating a newer completed chat run reused runId).
       if (chatSnapshot && chatEntry && chatEntry.ts > agentEntry.ts) {
-        return chatSnapshot;
+        return attachRunResult(params.runId, chatSnapshot);
       }
       return null;
     }
@@ -166,10 +212,13 @@ export function readTerminalSnapshotFromGatewayDedupe(params: {
   if (agentSnapshot && chatSnapshot && agentEntry && chatEntry) {
     // Reused idempotency keys can leave both records present. Prefer the
     // freshest terminal snapshot so callers observe the latest run outcome.
-    return chatEntry.ts > agentEntry.ts ? chatSnapshot : agentSnapshot;
+    return attachRunResult(
+      params.runId,
+      chatEntry.ts > agentEntry.ts ? chatSnapshot : agentSnapshot,
+    );
   }
 
-  return agentSnapshot ?? chatSnapshot;
+  return attachRunResult(params.runId, agentSnapshot ?? chatSnapshot);
 }
 
 export async function waitForTerminalGatewayDedupe(params: {
@@ -254,6 +303,9 @@ export function setGatewayDedupeEntry(params: {
 }
 
 export const __testing = {
+  clearRunResults(): void {
+    AGENT_WAIT_RESULTS_BY_RUN_ID.clear();
+  },
   getWaiterCount(runId?: string): number {
     if (runId) {
       return AGENT_WAITERS_BY_RUN_ID.get(runId)?.size ?? 0;
