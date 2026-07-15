@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ExecApprovalManager } from "../exec-approval-manager.js";
 import { GATEWAY_CLIENT_IDS } from "../protocol/client-info.js";
 import {
@@ -8,12 +8,6 @@ import {
   isApprovalRecordVisibleToClient,
 } from "./approval-shared.js";
 import type { GatewayClient, GatewayRequestContext } from "./types.js";
-
-const hasApprovalTurnSourceRouteMock = vi.hoisted(() => vi.fn(() => true));
-
-vi.mock("../../infra/approval-turn-source.js", () => ({
-  hasApprovalTurnSourceRoute: hasApprovalTurnSourceRouteMock,
-}));
 
 type ApprovalClientLookup = NonNullable<GatewayRequestContext["getApprovalClientConnIds"]>;
 
@@ -51,10 +45,6 @@ function createApprovalClientLookup(clients: GatewayClient[]): ApprovalClientLoo
 }
 
 describe("handlePendingApprovalRequest", () => {
-  afterEach(() => {
-    hasApprovalTurnSourceRouteMock.mockClear();
-  });
-
   it("allows operator.admin clients to see requester-bound approvals", () => {
     const manager = new ExecApprovalManager();
     const record = manager.create(
@@ -271,14 +261,11 @@ describe("handlePendingApprovalRequest", () => {
     });
 
     await Promise.resolve();
-    expect(hasApprovalTurnSourceRouteMock).not.toHaveBeenCalled();
-
     expect(manager.resolve(record.id, "allow-once")).toBe(true);
     await requestPromise;
   });
 
   it("fast-fails a chat approval when the originating turn has no reply target", async () => {
-    hasApprovalTurnSourceRouteMock.mockReturnValueOnce(false);
     const manager = new ExecApprovalManager();
     const record = manager.create(
       {
@@ -313,12 +300,6 @@ describe("handlePendingApprovalRequest", () => {
       deliverRequest: () => false,
     });
 
-    expect(hasApprovalTurnSourceRouteMock).toHaveBeenCalledWith({
-      sessionKey: "agent:workout:telegram:workout:direct:michael",
-      turnSourceChannel: "telegram",
-      turnSourceTo: undefined,
-      turnSourceAccountId: "workout",
-    });
     expect(manager.getSnapshot(record.id)?.resolvedBy).toBe("no-approval-route");
     expect(respond).toHaveBeenCalledWith(
       true,
@@ -462,7 +443,6 @@ describe("handlePendingApprovalRequest", () => {
   });
 
   it("does not target no-device gateway-client approvals to unrelated approval-scoped clients", async () => {
-    hasApprovalTurnSourceRouteMock.mockReturnValueOnce(false);
     const manager = new ExecApprovalManager();
     const record = manager.create(
       {
@@ -534,7 +514,6 @@ describe("handlePendingApprovalRequest", () => {
   });
 
   it("does not target no-device browser UI approvals to unrelated approval-scoped clients", async () => {
-    hasApprovalTurnSourceRouteMock.mockReturnValueOnce(false);
     const manager = new ExecApprovalManager();
     const record = manager.create(
       {
@@ -606,7 +585,6 @@ describe("handlePendingApprovalRequest", () => {
   });
 
   it("does not target device-bound gateway-client approvals to unrelated approval-scoped clients", async () => {
-    hasApprovalTurnSourceRouteMock.mockReturnValueOnce(false);
     const manager = new ExecApprovalManager();
     const record = manager.create(
       {
@@ -681,7 +659,6 @@ describe("handlePendingApprovalRequest", () => {
   });
 
   it("does not target no-device approvals by self-declared client id", async () => {
-    hasApprovalTurnSourceRouteMock.mockReturnValueOnce(false);
     const manager = new ExecApprovalManager();
     const record = manager.create(
       {

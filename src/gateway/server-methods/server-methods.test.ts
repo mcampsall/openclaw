@@ -2475,44 +2475,33 @@ describe("exec approval handlers", () => {
     }
   });
 
-  it("keeps approvals pending when the originating chat can handle /approve directly", async () => {
-    vi.useFakeTimers();
-    try {
-      const { manager, handlers, forwarder, respond, context } =
-        createForwardingExecApprovalFixture();
-      const expireSpy = vi.spyOn(manager, "expire");
+  it("fast-fails when a turn source exists but no approval delivery was accepted", async () => {
+    const { manager, handlers, forwarder, respond, context } =
+      createForwardingExecApprovalFixture();
+    const expireSpy = vi.spyOn(manager, "expire");
 
-      const requestPromise = requestExecApproval({
-        handlers,
-        respond,
-        context,
-        params: {
-          twoPhase: true,
-          timeoutMs: 60_000,
-          id: "approval-chat-route",
-          host: "gateway",
-          turnSourceChannel: "slack",
-          turnSourceTo: "D123",
-        },
-      });
+    await requestExecApproval({
+      handlers,
+      respond,
+      context,
+      params: {
+        twoPhase: true,
+        timeoutMs: 60_000,
+        id: "approval-chat-route",
+        host: "gateway",
+        turnSourceChannel: "slack",
+        turnSourceTo: "D123",
+      },
+    });
 
-      await vi.waitFor(() => {
-        expect(lastMockCallArg(respond)).toBe(true);
-        expectRecordFields(lastMockCallArg(respond, 1), {
-          status: "accepted",
-          id: "approval-chat-route",
-        });
-        expect(lastMockCallArg(respond, 2)).toBeUndefined();
-      });
-
-      expect(forwarder.handleRequested).toHaveBeenCalledTimes(1);
-      expect(expireSpy).not.toHaveBeenCalled();
-
-      manager.resolve("approval-chat-route", "allow-once");
-      await requestPromise;
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(forwarder.handleRequested).toHaveBeenCalledTimes(1);
+    expect(expireSpy).toHaveBeenCalledWith("approval-chat-route", "no-approval-route");
+    expect(lastMockCallArg(respond)).toBe(true);
+    expectRecordFields(lastMockCallArg(respond, 1), {
+      id: "approval-chat-route",
+      decision: null,
+    });
+    expect(lastMockCallArg(respond, 2)).toBeUndefined();
   });
 
   it("keeps approvals pending when no approver clients but forwarding accepted the request", async () => {

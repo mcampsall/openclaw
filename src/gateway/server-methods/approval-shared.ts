@@ -1,4 +1,3 @@
-import { hasApprovalTurnSourceRoute } from "../../infra/approval-turn-source.js";
 import type { ExecApprovalDecision } from "../../infra/exec-approvals.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import type {
@@ -33,9 +32,7 @@ type PendingApprovalLookupError =
     };
 
 type ApprovalTurnSourceFields = {
-  sessionKey?: string | null;
   turnSourceChannel?: string | null;
-  turnSourceTo?: string | null;
   turnSourceAccountId?: string | null;
 };
 
@@ -313,17 +310,7 @@ export async function handlePendingApprovalRequest<
       : (params.context.hasExecApprovalClients?.(params.clientConnId) ?? false);
   const deliveredResult = params.deliverRequest();
   const delivered = isPromiseLike(deliveredResult) ? await deliveredResult : deliveredResult;
-  const hasTurnSourceRoute =
-    !hasApprovalClients &&
-    !delivered &&
-    hasApprovalTurnSourceRoute({
-      sessionKey: params.record.request.sessionKey,
-      turnSourceChannel: params.record.request.turnSourceChannel,
-      turnSourceTo: params.record.request.turnSourceTo,
-      turnSourceAccountId: params.record.request.turnSourceAccountId,
-    });
-
-  if (!hasApprovalClients && !hasTurnSourceRoute && !delivered) {
+  if (!hasApprovalClients && !delivered) {
     params.manager.expire(params.record.id, "no-approval-route");
     params.respond(
       true,

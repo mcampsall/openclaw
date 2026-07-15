@@ -255,45 +255,34 @@ describe("createPluginApprovalHandlers", () => {
       expect(hasExecApprovalClients).toHaveBeenCalledWith("backend-conn-42");
     });
 
-    it("keeps plugin approvals pending when the originating chat can handle /approve directly", async () => {
-      vi.useFakeTimers();
-      try {
-        const handlers = createPluginApprovalHandlers(manager);
-        const respond = vi.fn();
-        const opts = createMockOptions(
-          "plugin.approval.request",
-          {
-            title: "Sensitive action",
-            description: "Desc",
-            twoPhase: true,
-            turnSourceChannel: "slack",
-            turnSourceTo: "C123",
-          },
-          {
-            respond,
-            context: {
-              broadcast: vi.fn(),
-              logGateway: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
-              hasExecApprovalClients: () => false,
-            } as unknown as GatewayRequestHandlerOptions["context"],
-          },
-        );
+    it("fast-fails a turn-source approval when no delivery route accepted it", async () => {
+      const handlers = createPluginApprovalHandlers(manager);
+      const respond = vi.fn();
+      const opts = createMockOptions(
+        "plugin.approval.request",
+        {
+          title: "Sensitive action",
+          description: "Desc",
+          twoPhase: true,
+          turnSourceChannel: "slack",
+          turnSourceTo: "C123",
+        },
+        {
+          respond,
+          context: {
+            broadcast: vi.fn(),
+            logGateway: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+            hasExecApprovalClients: () => false,
+          } as unknown as GatewayRequestHandlerOptions["context"],
+        },
+      );
 
-        const requestPromise = handlers["plugin.approval.request"](opts);
+      await handlers["plugin.approval.request"](opts);
 
-        await vi.waitFor(() => {
-          const accepted = acceptedResult(respond as unknown as MockCallSource);
-          expect(accepted.status).toBe("accepted");
-          expect(accepted.id).toBeTypeOf("string");
-        });
-
-        const approvalId = acceptedApprovalId(respond as unknown as MockCallSource);
-        manager.resolve(approvalId, "allow-once");
-
-        await requestPromise;
-      } finally {
-        vi.useRealTimers();
-      }
+      const result = responseResult(respond as unknown as MockCallSource);
+      expect(result.id).toBeTypeOf("string");
+      expect(result.decision).toBeNull();
+      expect(manager.getSnapshot(result.id as string)?.resolvedBy).toBe("no-approval-route");
     });
 
     it("rejects invalid severity value", async () => {
