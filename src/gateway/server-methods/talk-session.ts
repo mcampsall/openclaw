@@ -269,7 +269,10 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           cfg: runtimeConfig,
           provider: resolution.provider,
           providerConfig: withRealtimeBrowserOverrides(resolution.providerConfig, launchOptions),
-          instructions: buildRealtimeInstructions(realtimeConfig.instructions),
+          instructions: buildRealtimeInstructions(
+            realtimeConfig.instructions,
+            realtimeConfig.consultRouting,
+          ),
           tools: [REALTIME_VOICE_AGENT_CONSULT_TOOL],
           model: launchOptions.model,
           voice: launchOptions.voice,

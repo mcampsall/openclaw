@@ -111,7 +111,7 @@ vi.mock("../../auto-reply/reply/session-reset-prompt.js", async () => {
 vi.mock("../../infra/agent-events.js", () => ({
   emitAgentEvent: mocks.emitAgentEvent,
   registerAgentRunContext: mocks.registerAgentRunContext,
-  onAgentEvent: vi.fn(),
+  onAgentEvent: vi.fn(() => () => undefined),
 }));
 
 vi.mock("../../agents/subagent-registry-read.js", () => ({
@@ -3830,6 +3830,37 @@ describe("gateway agent handler chat.abort integration", () => {
     expect(respond).toHaveBeenCalledWith(true, { runId, status: "in_flight" }, undefined, {
       cached: true,
       runId,
+    });
+  });
+
+  it("reports a still-registered chat run as pending when agent.wait reaches its poll deadline", async () => {
+    const context = makeContext();
+    const runId = "chat-run-still-working";
+    const startedAtMs = Date.now();
+    context.chatAbortControllers.set(runId, {
+      controller: new AbortController(),
+      sessionId: "session-still-working",
+      sessionKey: "agent:main:main",
+      startedAtMs,
+      expiresAtMs: startedAtMs + 60_000,
+      kind: "chat-send",
+    });
+    const respond = vi.fn();
+
+    await agentHandlers["agent.wait"]({
+      params: { runId, timeoutMs: 1 },
+      respond,
+      context,
+      req: { type: "req", id: "wait-active", method: "agent.wait" },
+      client: null,
+      isWebchatConnect: () => false,
+    } as never);
+
+    expect(respond).toHaveBeenCalledWith(true, {
+      runId,
+      status: "pending",
+      startedAt: startedAtMs,
+      livenessState: "working",
     });
   });
 });

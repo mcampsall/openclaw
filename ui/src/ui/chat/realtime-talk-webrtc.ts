@@ -66,6 +66,12 @@ export class WebRtcSdpRealtimeTalkTransport implements RealtimeTalkTransport {
     }
     this.channel = this.peer.createDataChannel("oai-events");
     this.channel.addEventListener("open", () => {
+      if (this.requiresAgentConsult()) {
+        this.send({
+          type: "session.update",
+          session: { tool_choice: "required" },
+        });
+      }
       this.ctx.callbacks.onStatus?.("listening");
       this.emitTalkEvent({ type: "session.ready" });
     });
@@ -269,6 +275,16 @@ export class WebRtcSdpRealtimeTalkTransport implements RealtimeTalkTransport {
         output: JSON.stringify(result),
       },
     });
-    this.send({ type: "response.create" });
+    this.send(
+      this.requiresAgentConsult()
+        ? { type: "response.create", response: { tool_choice: "none" } }
+        : { type: "response.create" },
+    );
+  }
+
+  private requiresAgentConsult(): boolean {
+    return (
+      this.session.provider === "openai" && this.session.consultRouting === "force-agent-consult"
+    );
   }
 }

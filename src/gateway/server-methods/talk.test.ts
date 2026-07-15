@@ -1236,6 +1236,7 @@ describe("talk.client.create handler", () => {
                 model: "gpt-realtime",
                 voice: "alloy",
                 instructions: "Speak warmly.",
+                consultRouting: "force-agent-consult",
               },
             },
           }) as OpenClawConfig,
@@ -1254,12 +1255,20 @@ describe("talk.client.create handler", () => {
       silenceDurationMs: 650,
       prefixPaddingMs: 250,
       reasoningEffort: "low",
+      forceAgentConsult: true,
     });
     expect(createInput.instructions).toContain("Additional realtime instructions:\nSpeak warmly.");
+    expect(createInput.instructions).toContain(
+      "Call openclaw_agent_consult before every substantive answer.",
+    );
     expect(createInput).not.toHaveProperty("provider");
     expect(createInput).not.toHaveProperty("providers");
     expect(createInput).not.toHaveProperty("transport");
-    expectRespondOk(respond, { provider: "openai", transport: "webrtc" });
+    expectRespondOk(respond, {
+      provider: "openai",
+      transport: "webrtc",
+      consultRouting: "force-agent-consult",
+    });
   });
 
   it("rejects Gateway-owned transports on the client endpoint", async () => {

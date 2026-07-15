@@ -152,6 +152,85 @@ describe("WebRtcSdpRealtimeTalkTransport", () => {
     transport.stop();
   });
 
+  it("forces the OpenClaw consult tool, then allows only the returned result to be spoken", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("answer-sdp")) as unknown as typeof fetch,
+    );
+    let listener: ((event: { event: string; payload?: unknown }) => void) | undefined;
+    const request = vi.fn(async (method: string) => {
+      if (method === "talk.client.toolCall") {
+        setImmediate(() => {
+          listener?.({
+            event: "chat",
+            payload: {
+              runId: "run-force",
+              state: "final",
+              message: { text: "The canonical answer." },
+            },
+          });
+        });
+        return { runId: "run-force" };
+      }
+      if (method === "agent.wait") {
+        return await new Promise((resolve) => setImmediate(() => resolve({ status: "pending" })));
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+    const transport = new WebRtcSdpRealtimeTalkTransport(
+      {
+        provider: "openai",
+        transport: "webrtc",
+        clientSecret: "client-secret-123",
+        consultRouting: "force-agent-consult",
+      },
+      {
+        client: {
+          request,
+          addEventListener: (callback: typeof listener) => {
+            listener = callback;
+            return () => {
+              listener = undefined;
+            };
+          },
+        } as never,
+        sessionKey: "agent:main:main",
+        callbacks: {},
+      },
+    );
+
+    await transport.start();
+    const channel = FakePeerConnection.instances[0]?.channel;
+    channel?.dispatchEvent(new Event("open"));
+    channel?.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "response.function_call_arguments.done",
+          item_id: "item-force",
+          call_id: "call-force",
+          name: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+          arguments: JSON.stringify({ question: "What is canonical?" }),
+        }),
+      }),
+    );
+
+    await vi.waitFor(() => expect(channel?.send).toHaveBeenCalledTimes(3));
+    const sent = channel?.send.mock.calls.map(([value]) => JSON.parse(String(value))) ?? [];
+    expect(sent).toEqual([
+      { type: "session.update", session: { tool_choice: "required" } },
+      {
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: "call-force",
+          output: JSON.stringify({ result: "The canonical answer." }),
+        },
+      },
+      { type: "response.create", response: { tool_choice: "none" } },
+    ]);
+    transport.stop();
+  });
+
   it("surfaces speech and response lifecycle status from the OpenAI data channel", async () => {
     vi.stubGlobal(
       "fetch",
@@ -276,6 +355,9 @@ describe("WebRtcSdpRealtimeTalkTransport", () => {
         expect(params).toEqual({ sessionKey: "main", runId: "run-1" });
         return { ok: true, aborted: true };
       }
+      if (method === "agent.wait") {
+        return await new Promise(() => undefined);
+      }
       expect(method).toBe("talk.client.toolCall");
       expect(params.callId).toBe("call-1");
       expect(params.name).toBe(REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME);
@@ -315,7 +397,14 @@ describe("WebRtcSdpRealtimeTalkTransport", () => {
         }),
       }),
     );
-    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(request).toHaveBeenCalledWith("talk.client.toolCall", {
+        sessionKey: "main",
+        callId: "call-1",
+        name: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+        args: { question: "status?" },
+      }),
+    );
     expect(request).toHaveBeenCalledWith("talk.client.toolCall", {
       sessionKey: "main",
       callId: "call-1",

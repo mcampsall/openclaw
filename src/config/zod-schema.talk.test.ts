@@ -37,6 +37,7 @@ describe("OpenClawSchema talk validation", () => {
               },
             },
             instructions: "Speak with crisp diction.",
+            consultRouting: "force-agent-consult",
           },
         },
       }),

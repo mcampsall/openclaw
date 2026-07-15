@@ -40,6 +40,7 @@ export type RealtimeTalkWebRtcSdpSessionResult = {
   expiresAt?: number;
   consultThinkingLevel?: string;
   consultFastMode?: boolean;
+  consultRouting?: "provider-direct" | "force-agent-consult";
 };
 
 export type RealtimeTalkJsonPcmWebSocketSessionResult = {
@@ -187,6 +188,18 @@ type ChatPayload = {
   message?: unknown;
 };
 
+type AgentWaitResult = {
+  status?: string;
+  error?: string;
+  stopReason?: string;
+  endedAt?: number;
+  livenessState?: string;
+  yielded?: boolean;
+};
+
+const AGENT_WAIT_HEARTBEAT_MS = 30_000;
+const EMPTY_FINAL_FALLBACK_GRACE_MS = 500;
+
 function extractTextFromMessage(message: unknown): string {
   if (!message || typeof message !== "object") {
     return "";
@@ -211,7 +224,6 @@ function extractTextFromMessage(message: unknown): string {
 function waitForChatResult(params: {
   client: GatewayBrowserClient;
   runId: string;
-  timeoutMs: number;
   signal?: AbortSignal;
 }): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -219,16 +231,29 @@ function waitForChatResult(params: {
       reject(new DOMException("OpenClaw tool call aborted", "AbortError"));
       return;
     }
-    const timer = window.setTimeout(() => {
-      cleanup();
-      reject(new Error("OpenClaw tool call timed out"));
-    }, params.timeoutMs);
+    let settled = false;
+    let fallbackTimer: number | undefined;
     const onAbort = () => {
-      cleanup();
-      reject(new DOMException("OpenClaw tool call aborted", "AbortError"));
+      settleReject(new DOMException("OpenClaw tool call aborted", "AbortError"));
     };
     params.signal?.addEventListener("abort", onAbort, { once: true });
     let unsubscribe: () => void = () => undefined;
+    const settleResolve = (value: string) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const settleReject = (error: Error | DOMException) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
     unsubscribe = params.client.addEventListener((evt: GatewayEventFrame) => {
       if (evt.event !== "chat") {
         return;
@@ -238,20 +263,72 @@ function waitForChatResult(params: {
         return;
       }
       if (payload.state === "final") {
-        cleanup();
-        resolve(extractTextFromMessage(payload.message) || "OpenClaw finished with no text.");
+        settleResolve(extractTextFromMessage(payload.message) || "OpenClaw finished with no text.");
       } else if (payload.state === "aborted") {
-        cleanup();
-        reject(
+        settleReject(
           new DOMException(payload.errorMessage ?? "OpenClaw tool call aborted", "AbortError"),
         );
       } else if (payload.state === "error") {
-        cleanup();
-        reject(new Error(payload.errorMessage ?? "OpenClaw tool call failed"));
+        settleReject(new Error(payload.errorMessage ?? "OpenClaw tool call failed"));
       }
     });
+    void monitorRunLifecycle();
+
+    async function monitorRunLifecycle() {
+      while (!settled) {
+        let result: AgentWaitResult;
+        try {
+          result = await params.client.request<AgentWaitResult>("agent.wait", {
+            runId: params.runId,
+            timeoutMs: AGENT_WAIT_HEARTBEAT_MS,
+          });
+        } catch (error) {
+          settleReject(error instanceof Error ? error : new Error(String(error)));
+          return;
+        }
+        if (settled) {
+          return;
+        }
+        if (result.status === "pending") {
+          continue;
+        }
+        if (result.status === "ok") {
+          fallbackTimer = window.setTimeout(() => {
+            settleResolve("OpenClaw finished with no text.");
+          }, EMPTY_FINAL_FALLBACK_GRACE_MS);
+          return;
+        }
+        if (result.status === "error") {
+          settleReject(new Error(result.error?.trim() || "OpenClaw tool call failed"));
+          return;
+        }
+        if (result.status === "timeout") {
+          const terminal =
+            result.endedAt !== undefined ||
+            Boolean(result.error?.trim()) ||
+            Boolean(result.stopReason?.trim()) ||
+            Boolean(result.livenessState?.trim()) ||
+            result.yielded === true;
+          settleReject(
+            new Error(
+              terminal
+                ? result.error?.trim() || "OpenClaw tool call timed out"
+                : "OpenClaw tool call is no longer active",
+            ),
+          );
+          return;
+        }
+        settleReject(
+          new Error(`OpenClaw tool call returned unknown status: ${String(result.status)}`),
+        );
+        return;
+      }
+    }
+
     function cleanup() {
-      window.clearTimeout(timer);
+      if (fallbackTimer !== undefined) {
+        window.clearTimeout(fallbackTimer);
+      }
       params.signal?.removeEventListener("abort", onAbort);
       unsubscribe();
     }
@@ -304,7 +381,6 @@ export async function submitRealtimeTalkConsult(params: {
     const result = await waitForChatResult({
       client: ctx.client,
       runId,
-      timeoutMs: 120_000,
       signal: params.signal,
     });
     submit(callId, { result });

@@ -120,6 +120,8 @@ export type RealtimeVoiceBrowserSessionCreateRequest = {
   silenceDurationMs?: number;
   prefixPaddingMs?: number;
   reasoningEffort?: string;
+  /** Ask providers that support it to require the agent-consult tool before answering. */
+  forceAgentConsult?: boolean;
 };
 
 export type RealtimeVoiceBrowserAudioContract = {

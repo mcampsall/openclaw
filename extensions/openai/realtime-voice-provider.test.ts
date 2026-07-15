@@ -449,6 +449,45 @@ describe("buildOpenAIRealtimeVoiceProvider", () => {
     expect((session as { offerHeaders?: Record<string, string> }).offerHeaders).toBeUndefined();
   });
 
+  it("requires the consult tool when the browser session is agent-authoritative", async () => {
+    fetchWithSsrFGuardMock.mockResolvedValueOnce({
+      response: createJsonResponse({
+        client_secret: { value: "client-secret-123" },
+      }),
+      release: vi.fn(async () => undefined),
+    });
+    const provider = buildOpenAIRealtimeVoiceProvider();
+    if (!provider.createBrowserSession) {
+      throw new Error("expected OpenAI realtime provider to support browser sessions");
+    }
+
+    await provider.createBrowserSession({
+      providerConfig: { apiKey: "sk-test" }, // pragma: allowlist secret
+      instructions: "Consult OpenClaw.",
+      forceAgentConsult: true,
+      tools: [
+        {
+          type: "function",
+          name: "openclaw_agent_consult",
+          description: "Ask OpenClaw.",
+          parameters: { type: "object", properties: {} },
+        },
+      ],
+    });
+
+    const body = requireFetchJsonBody();
+    const bodySession = requireRecord(body.session, "fetch session");
+    expect(bodySession.tool_choice).toBe("required");
+    expect(bodySession.tools).toEqual([
+      {
+        type: "function",
+        name: "openclaw_agent_consult",
+        description: "Ask OpenClaw.",
+        parameters: { type: "object", properties: {} },
+      },
+    ]);
+  });
+
   it("resolves keychain OPENAI_API_KEY refs before creating browser sessions", async () => {
     vi.stubEnv("OPENAI_API_KEY", "keychain:openclaw:OPENAI_REALTIME_BROWSER_TEST");
     execFileSyncMock.mockReturnValueOnce("sk-browser-env\n"); // pragma: allowlist secret

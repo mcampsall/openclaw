@@ -436,6 +436,9 @@ const BrowserRealtimeWebRtcSdpSessionSchema = Type.Object(
     model: Type.Optional(Type.String()),
     voice: Type.Optional(Type.String()),
     expiresAt: Type.Optional(Type.Number()),
+    consultRouting: Type.Optional(
+      Type.Union([Type.Literal("provider-direct"), Type.Literal("force-agent-consult")]),
+    ),
   },
   { additionalProperties: false },
 );
@@ -507,6 +510,9 @@ const TalkRealtimeConfigSchema = Type.Object(
     mode: Type.Optional(TalkModeSchema),
     transport: Type.Optional(TalkTransportSchema),
     brain: Type.Optional(TalkBrainSchema),
+    consultRouting: Type.Optional(
+      Type.Union([Type.Literal("provider-direct"), Type.Literal("force-agent-consult")]),
+    ),
   },
   { additionalProperties: false },
 );

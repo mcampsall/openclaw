@@ -62,6 +62,8 @@ export type TalkRealtimeConfig = {
   transport?: "webrtc" | "provider-websocket" | "gateway-relay" | "managed-room";
   /** Tool/agent strategy for realtime sessions. */
   brain?: "agent-consult" | "direct-tools" | "none";
+  /** Require substantive WebRTC replies to pass through the OpenClaw agent consult tool. */
+  consultRouting?: "provider-direct" | "force-agent-consult";
 };
 
 export type ResolvedTalkConfig = {

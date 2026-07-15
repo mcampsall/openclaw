@@ -1234,7 +1234,7 @@ async function createOpenAIRealtimeBrowserSession(
   };
   if (req.tools && req.tools.length > 0) {
     session.tools = req.tools;
-    session.tool_choice = "auto";
+    session.tool_choice = req.forceAgentConsult ? "required" : "auto";
   }
   const reasoningEffort = trimToUndefined(req.reasoningEffort) ?? config.reasoningEffort;
   if (reasoningEffort) {

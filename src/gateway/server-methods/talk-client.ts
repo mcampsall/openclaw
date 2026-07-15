@@ -193,15 +193,28 @@ export const talkClientHandlers: GatewayRequestHandlers = {
         const session = await resolution.provider.createBrowserSession({
           cfg: runtimeConfig,
           providerConfig: resolution.providerConfig,
-          instructions: buildRealtimeInstructions(realtimeConfig.instructions),
+          instructions: buildRealtimeInstructions(
+            realtimeConfig.instructions,
+            realtimeConfig.consultRouting,
+          ),
           tools: [REALTIME_VOICE_AGENT_CONSULT_TOOL],
+          forceAgentConsult: realtimeConfig.consultRouting === "force-agent-consult",
           ...launchOptions,
         });
         if (
           !isUnsupportedBrowserWebRtcSession(session) &&
           (!transport || session.transport === transport)
         ) {
-          respond(true, session, undefined);
+          respond(
+            true,
+            {
+              ...session,
+              ...(realtimeConfig.consultRouting
+                ? { consultRouting: realtimeConfig.consultRouting }
+                : {}),
+            },
+            undefined,
+          );
           return;
         }
         if (transport) {

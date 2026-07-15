@@ -1819,6 +1819,16 @@ export const agentHandlers: GatewayRequestHandlers = {
     }
 
     if (!snapshot) {
+      const activeAfterWait = context.chatAbortControllers.get(runId);
+      if (activeAfterWait !== undefined && activeAfterWait.kind !== "agent") {
+        respond(true, {
+          runId,
+          status: "pending",
+          startedAt: activeAfterWait.startedAtMs,
+          livenessState: "working",
+        });
+        return;
+      }
       respond(true, {
         runId,
         status: "timeout",

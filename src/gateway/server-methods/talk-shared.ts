@@ -6,7 +6,10 @@ import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
 } from "../../shared/string-coerce.js";
-import { REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME } from "../../talk/agent-consult-tool.js";
+import {
+  REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+  buildRealtimeVoiceAgentConsultPolicyInstructions,
+} from "../../talk/agent-consult-tool.js";
 import type {
   RealtimeVoiceBrowserSession,
   RealtimeVoiceProviderConfig,
@@ -131,6 +134,7 @@ export function buildTalkRealtimeConfig(config: OpenClawConfig, requestedProvide
     mode: normalizeOptionalLowercaseString(talkRealtime?.mode),
     transport: normalizeOptionalLowercaseString(talkRealtime?.transport),
     brain: normalizeOptionalLowercaseString(talkRealtime?.brain),
+    consultRouting: normalizeOptionalLowercaseString(talkRealtime?.consultRouting),
   };
 }
 
@@ -213,12 +217,25 @@ export function resolveConfiguredRealtimeTranscriptionProvider(params: {
 
 const DEFAULT_REALTIME_INSTRUCTIONS = `You are OpenClaw's realtime voice interface. Keep spoken replies concise. If the user asks for code, repository state, tools, files, current OpenClaw context, or deeper reasoning, call ${REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME} and then summarize the result naturally.`;
 
-export function buildRealtimeInstructions(configuredInstructions?: string): string {
+export function buildRealtimeInstructions(
+  configuredInstructions?: string,
+  consultRouting?: string,
+): string {
   const extra = normalizeOptionalString(configuredInstructions);
-  if (!extra) {
-    return DEFAULT_REALTIME_INSTRUCTIONS;
-  }
-  return `${DEFAULT_REALTIME_INSTRUCTIONS}\n\nAdditional realtime instructions:\n${extra}`;
+  const consult =
+    consultRouting === "force-agent-consult"
+      ? buildRealtimeVoiceAgentConsultPolicyInstructions({
+          toolPolicy: "owner",
+          consultPolicy: "always",
+        })
+      : undefined;
+  return [
+    DEFAULT_REALTIME_INSTRUCTIONS,
+    consult,
+    extra ? `Additional realtime instructions:\n${extra}` : undefined,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 type RealtimeVoiceLaunchOptions = {
